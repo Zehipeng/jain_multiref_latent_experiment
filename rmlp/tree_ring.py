@@ -59,7 +59,10 @@ def build_jain_ring_key(
     """Reproduce Jain Tree-Ring/utils.py::get_pattern."""
     generator = torch.Generator(device=pipe.device).manual_seed(w_seed)
     initial = _prepare_random_latents(pipe, img_size, generator)
-    key = torch.fft.fftshift(torch.fft.fft2(initial), dim=(-1, -2))
+    # PyTorch 2.1 creates experimental complex32 values for float16 FFTs and
+    # cannot serialize that dtype. Compute Tree-Ring FFTs in float32 so keys
+    # are stable complex64 tensors on every supported AutoDL image.
+    key = torch.fft.fftshift(torch.fft.fft2(initial.float()), dim=(-1, -2))
     source = key.clone().detach()
     for radius in range(shape[-1] // 2, 0, -1):
         ring = torch.as_tensor(
@@ -84,14 +87,16 @@ def generate_watermarked_image(
     # The generation seed is deliberately independent of w_seed.
     generator = torch.Generator(device=pipe.device).manual_seed(generation_seed)
     initial = _prepare_random_latents(pipe, img_size, generator)
-    initial_fft = torch.fft.fftshift(torch.fft.fft2(initial), dim=(-1, -2))
+    initial_fft = torch.fft.fftshift(
+        torch.fft.fft2(initial.float()), dim=(-1, -2)
+    )
     initial_fft[w_mask] = w_key[w_mask].clone()
     watermarked_latents = torch.fft.ifft2(
         torch.fft.ifftshift(initial_fft, dim=(-1, -2))
     ).real
     watermarked_latents = torch.nan_to_num(
         watermarked_latents, nan=0.0, posinf=4.0, neginf=-4.0
-    )
+    ).to(dtype=pipe.unet.dtype)
     result = pipe(
         prompt=prompt,
         negative_prompt="",
@@ -133,7 +138,7 @@ def detect_p_value(
             output_type="latent",
         ).images
         inverted_fft = torch.fft.fftshift(
-            torch.fft.fft2(inverted), dim=(-1, -2)
+            torch.fft.fft2(inverted.float()), dim=(-1, -2)
         )[w_mask].flatten()
         target = w_key[w_mask].flatten()
         observed = torch.cat((inverted_fft.real, inverted_fft.imag)).float()
@@ -162,4 +167,3 @@ def build_key_and_mask(
         shape, int(wm["w_channel"]), int(wm["w_radius"]), pipe.device
     )
     return key, mask
-
