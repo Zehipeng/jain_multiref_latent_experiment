@@ -1,0 +1,177 @@
+# AutoDL 使用说明
+
+## 一、把本地代码同步到 GitHub
+
+实验代码目录为：
+
+```text
+jain_multiref_latent_experiment/
+```
+
+该目录已经配置 `.gitignore`，不会把 `data/`、`outputs/`、模型权重和
+Python 缓存提交到 GitHub。首次同步和后续更新由本地 Codex 在你指定的
+GitHub 仓库中完成。
+
+## 二、在 AutoDL 拉取代码
+
+```bash
+git clone <你的GitHub仓库地址>
+cd <仓库目录>/jain_multiref_latent_experiment
+```
+
+后续本地代码更新后，在 AutoDL 中执行：
+
+```bash
+git pull
+```
+
+## 三、安装依赖
+
+优先选择已经安装 PyTorch、CUDA 和 torchvision 的 AutoDL 镜像，不要在
+确认前覆盖镜像自带的 PyTorch。
+
+```bash
+nvidia-smi
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+python -m pip install -U pip
+python -m pip install -r requirements.txt
+```
+
+检查环境：
+
+```bash
+python -m compileall rmlp prepare_references.py run_forgery.py evaluate.py
+pytest -q
+```
+
+如 Hugging Face 模型需要授权：
+
+```bash
+huggingface-cli login
+```
+
+## 四、准备 cover 图像
+
+把至少 10 张无水印 RGB 图像上传到：
+
+```text
+data/covers/
+```
+
+程序按文件名排序读取，并统一做 512×512 resize 和 center crop。不要把
+参考水印图放入该目录。
+
+## 五、生成同密钥参考库
+
+```bash
+python prepare_references.py \
+  --config configs/tree_ring_stage1.yaml \
+  --verify
+```
+
+确认终端中 5 张参考图的 p-value。若有参考图的 `p > 0.05`，程序会保留
+记录并发出警告，不会自动挑图或重新生成。
+
+## 六、运行最低成本 smoke test
+
+```bash
+python run_forgery.py \
+  --config configs/tree_ring_stage1.yaml \
+  --mode both \
+  --limit 2 \
+  --iterations 200 \
+  --run-name smoke_2x200
+```
+
+```bash
+python evaluate.py \
+  --config configs/tree_ring_stage1.yaml \
+  --run-dir outputs/tree_ring_stage1/attacks/smoke_2x200 \
+  --no-lpips
+```
+
+smoke test 只检查程序能否运行、loss 是否下降、图片和评价文件能否生成，
+不用于判断方法效果。
+
+## 七、运行第一阶段核心实验
+
+```bash
+python run_forgery.py \
+  --config configs/tree_ring_stage1.yaml \
+  --mode both \
+  --limit 10 \
+  --iterations 3000 \
+  --run-name core_10x3000
+```
+
+```bash
+python evaluate.py \
+  --config configs/tree_ring_stage1.yaml \
+  --run-dir outputs/tree_ring_stage1/attacks/core_10x3000
+```
+
+如果攻击进程中断，使用完全相同的参数并增加：
+
+```bash
+--skip-existing
+```
+
+例如：
+
+```bash
+python run_forgery.py \
+  --config configs/tree_ring_stage1.yaml \
+  --mode both \
+  --limit 10 \
+  --iterations 3000 \
+  --run-name core_10x3000 \
+  --skip-existing
+```
+
+## 八、需要下载回本地的结果
+
+核心结果目录：
+
+```text
+outputs/tree_ring_stage1/attacks/core_10x3000/
+```
+
+至少下载：
+
+```text
+manifest.json
+prototype_diagnostics.json
+metrics.csv
+summary.json
+logs/
+baseline/
+full/
+covers/
+```
+
+其中：
+
+- `summary.json`：baseline/full 的 ASR、eligible ASR、p-value 和质量均值；
+- `metrics.csv`：每张 cover 的配对结果；
+- `prototype_diagnostics.json`：5 个参考距离、保留编号和剔除编号；
+- `logs/`：每张图的 latent loss、pixel loss 和 total loss 曲线；
+- `manifest.json`：运行参数、输入输出、耗时和显存。
+
+## 九、现阶段禁止同时修改的参数
+
+第一次核心实验保持配置不变：
+
+```text
+w_seed=0
+w_channel=0
+w_radius=16
+N=5
+K=4
+lambda_pixel=2
+alpha=5/255
+iterations=3000
+```
+
+先完成 baseline/full 公平比较，再根据结果决定是否调整步数、参考数量或
+加入两阶段质量约束。
+

@@ -1,0 +1,46 @@
+experiment:
+  name: tree_ring_stage1
+  seed: 1234
+
+model:
+  # The first screening run uses Jain's default same-model setting for speed.
+  target_model_id: CompVis/stable-diffusion-v1-4
+  proxy_vae_model_id: CompVis/stable-diffusion-v1-4
+  dtype: float16
+  device: cuda
+  disable_safety_checker: true
+
+watermark:
+  # Jain Tree-Ring simplified/hard-coded configuration.
+  w_seed: 0
+  w_channel: 0
+  w_radius: 16
+  img_size: 512
+  generation_seeds: [0, 1, 2, 3, 4]
+  generation_steps: 50
+
+prototype:
+  reference_count: 5
+  retain_count: 4
+  center: elementwise_median
+  aggregation: retained_mean
+
+attack:
+  lambda_pixel: 2.0
+  alpha: 0.0196078431372549  # 5 / 255
+  num_iterations: 3000
+  log_every: 100
+  save_steps: [1000, 3000]
+
+evaluation:
+  p_value_threshold: 0.05
+  inversion_steps: 50
+  compute_lpips: true
+
+data:
+  reference_prompts_file: prompts/reference_prompts.txt
+  references_dir: outputs/tree_ring_stage1/references
+  cover_dir: data/covers
+  output_dir: outputs/tree_ring_stage1
+  cover_limit: 10
+
