@@ -22,8 +22,8 @@ def test_formal_config_uses_same_models_and_reference_bank() -> None:
 
     assert formal["model"] == smoke["model"]
     assert formal["data"]["references_dir"] == smoke["data"]["references_dir"]
-    assert smoke["data"]["cover_dir"] == "data/MS-COCO/val2017"
-    assert formal["data"]["cover_dir"] == "data/MS-COCO/val2017"
+    assert smoke["data"]["cover_dir"] == "data/MS-COCO"
+    assert formal["data"]["cover_dir"] == "data/MS-COCO"
     assert formal["data"]["cover_limit"] == 10
     assert formal["attack"]["num_iterations"] == 3000
     assert formal["evaluation"]["compute_lpips"] is True

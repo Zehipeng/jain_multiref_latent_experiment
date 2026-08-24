@@ -66,21 +66,21 @@ huggingface-cli login
 
 ## 3. Prepare cover images
 
-Upload MS-COCO under the configured dataset root, for example:
+Upload MS-COCO under the configured dataset root. The current AutoDL layout
+stores the image files directly in:
 
 ```text
 data/MS-COCO/
-  train2017/
-  val2017/
-  annotations/
 ```
 
 The loader recursively scans the dataset root, ignores non-image files, and uses
 a deterministic directory/name order. It stops as soon as `--limit` images have
 been found, so the two-image smoke does not enumerate the entire dataset. Images
 are resized and center-cropped to 512 x 512; baseline and full always receive the
-same cover list. To select one COCO split explicitly, pass for example
-`--cover-dir data/MS-COCO/val2017`.
+same cover list. Both cross-model configs therefore use
+`cover_dir: data/MS-COCO`. Each run manifest records the selected relative paths
+and SHA-256 hashes. Confirm the COCO split label separately from the uploaded
+file count before reporting it in the paper.
 
 ## 4. Generate the five-reference bank
 
@@ -220,7 +220,7 @@ latent now stops the run instead of silently influencing reference rejection.
 ## 7.2 Cross-model 10 x 3,000 formal pretest
 
 `configs/tree_ring_cross_model_formal.yaml` fixes the exact SD2 target revision,
-the exact SD1.4 proxy-VAE revision, MS-COCO 2017 `val2017`, five detector-positive
+the exact SD1.4 proxy-VAE revision, the uploaded MS-COCO cover root, five detector-positive
 same-key references, 3,000 optimization steps, and all three methods. It saves
 snapshots at steps 1,000/2,000/3,000 for only the first five covers and computes
 LPIPS during evaluation.

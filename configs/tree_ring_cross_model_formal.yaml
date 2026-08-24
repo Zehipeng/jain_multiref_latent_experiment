@@ -45,10 +45,12 @@ evaluation:
   compute_lpips: true
 
 data:
-  dataset_name: MS-COCO 2017 validation
+  # Images were uploaded directly into this directory (no val2017 subfolder).
+  # manifest.json records the exact selected files and SHA-256 hashes.
+  dataset_name: MS-COCO user-provided cover set
   reference_prompts_file: prompts/reference_prompts_cross_model.txt
   # Reuse the exact detector-positive bank validated by the corrected smoke.
   references_dir: outputs/tree_ring_cross_model_smoke/references
-  cover_dir: data/MS-COCO/val2017
+  cover_dir: data/MS-COCO
   output_dir: outputs/tree_ring_cross_model_formal
   cover_limit: 10
