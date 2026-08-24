@@ -1,4 +1,4 @@
-# 新项目 GitHub 与 AutoDL 同步工作流
+**# 新项目 GitHub 与 AutoDL 同步工作流**
 
 > 本文件用于记录新项目的固定协作方式。Codex 在处理本项目时，应优先读取本文件，并以这里的仓库地址和同步流程为准，不要误用旧项目 `code_fix.git` 的配置。
 
@@ -95,9 +95,9 @@ git push
 此仓库为公开仓库时，推荐用 HTTPS clone，拉取源码不需要 GitHub 登录或 SSH 密钥：
 
 ```bash
-cd /root/autodl-tmp
+cd /root/autodl-tmp/project
 git clone https://github.com/Zehipeng/jain_multiref_latent_experiment.git
-cd /root/autodl-tmp/jain_multiref_latent_experiment
+cd /root/autodl-tmp/project/jain_multiref_latent_experiment
 git remote -v
 git log -1 --oneline
 git status --short
@@ -110,7 +110,7 @@ git status --short
 本地 Codex 推送完成后，在 AutoDL 执行：
 
 ```bash
-cd /root/autodl-tmp/jain_multiref_latent_experiment
+cd /root/autodl-tmp/project/jain_multiref_latent_experiment
 git switch <本地推送的分支名>
 git pull --ff-only
 git log -1 --format=fuller
@@ -120,7 +120,7 @@ git status --short
 若远端有一个尚未在 AutoDL 建立的工作分支，首次拉取该分支使用：
 
 ```bash
-cd /root/autodl-tmp/jain_multiref_latent_experiment
+cd /root/autodl-tmp/project/jain_multiref_latent_experiment
 git fetch origin
 git switch -c <分支名> --track origin/<分支名>
 git log -1 --format=fuller
@@ -160,7 +160,123 @@ git status --short
 - 环境信息、完整日志和退出码
 - 核心 CSV／JSON、指标、生成图像和检查点
 
-实验结果不要推送到 GitHub。应在 AutoDL 打包为独立的 `tar.gz`，再通过 AutoDL 文件管理器下载到本地指定的实验结果目录，由 Codex读取和分析。
+实验结果不要推送到 GitHub。应在 AutoDL 打包为独立的 `tar.gz`，再通过 AutoDL 文件管理器下载到本地指定的实验结果目录，由 Codex 读取和分析。
+
+### 7.1 打包前记录可复现信息
+
+只有实验进程正常结束、退出码和输出文件已检查后才打包。以下示例中的 `run_id` 每次实验都要改成唯一名称；项目实际位于 `/root/autodl-tmp/project/jain_multiref_latent_experiment`：
+
+```bash
+cd /root/autodl-tmp/project/jain_multiref_latent_experiment
+
+run_id="tree_ring_stage1_20260824_run01"
+project_dir="/root/autodl-tmp/project/jain_multiref_latent_experiment"
+export_root="/root/autodl-tmp/experiment_exports"
+metadata_dir="$project_dir/logs/run_metadata_$run_id"
+archive="$export_root/${run_id}.tar.gz"
+
+mkdir -p "$export_root" "$metadata_dir"
+
+git rev-parse HEAD > "$metadata_dir/commit_sha.txt"
+git branch --show-current > "$metadata_dir/branch.txt"
+git status --short > "$metadata_dir/git_status.txt"
+python --version > "$metadata_dir/environment.txt" 2>&1
+python -m pip freeze >> "$metadata_dir/environment.txt"
+nvidia-smi >> "$metadata_dir/environment.txt" 2>&1
+```
+
+还应把正式实验的原始命令、配置文件、模型标识、数据或 manifest 版本、随机种子、开始与结束时间、退出码写入日志或元数据文件。若这些信息尚未记录，先补齐，不要仅凭文件名猜测。
+
+### 7.2 在 AutoDL 打包并校验
+
+下面的命令打包本阶段输出、日志、配置和依赖说明，不包含 Hugging Face 缓存、模型权重或数据集。执行前确认 `run_id` 与上一节完全一致：
+
+```bash
+cd /root/autodl-tmp/project/jain_multiref_latent_experiment
+
+run_id="tree_ring_stage1_20260824_run01"
+project_dir="/root/autodl-tmp/project/jain_multiref_latent_experiment"
+export_root="/root/autodl-tmp/experiment_exports"
+archive="$export_root/${run_id}.tar.gz"
+
+mkdir -p "$export_root"
+
+tar -czf "$archive" \
+  -C "$project_dir" \
+  outputs/tree_ring_stage1 \
+  logs \
+  configs/tree_ring_stage1.yaml \
+  requirements.txt
+
+cd "$export_root"
+sha256sum "${run_id}.tar.gz" > "${run_id}.tar.gz.sha256"
+tar -tzf "${run_id}.tar.gz" > "${run_id}.contents.txt"
+ls -lh "${run_id}.tar.gz" "${run_id}.tar.gz.sha256" "${run_id}.contents.txt"
+```
+
+若某次实验使用不同的输出目录或配置文件，必须相应修改 `tar` 的显式路径。不要直接打包整个项目、模型缓存或数据集。打包后先确认压缩包大小合理、`tar -tzf` 成功且 SHA-256 文件已生成。
+
+### 7.3 下载到本地并交给 Codex 分析
+
+通过 AutoDL 文件管理器或 FileZilla 下载以下三个文件：
+
+- `/root/autodl-tmp/experiment_exports/<run_id>.tar.gz`
+- `/root/autodl-tmp/experiment_exports/<run_id>.tar.gz.sha256`
+- `/root/autodl-tmp/experiment_exports/<run_id>.contents.txt`
+
+本地统一保存到：
+
+```text
+C:\Users\dell\Desktop\codex学习文档\实验结果\<run_id>\
+```
+
+不要修改压缩包内部文件。下载完成后，把本地压缩包的绝对路径告诉 Codex，并明确要求：
+
+```text
+请先校验 SHA-256，再解压到同名目录；核对 commit、配置、环境、日志、退出码和文件清单，
+然后分析 baseline 与 full 的核心指标、逐样本结果、攻击成功率、图像质量、失败样本、
+指标间权衡和异常；输出表格、必要图形、结论边界，以及下一轮最小实验建议。
+```
+
+Codex 分析时遵循以下顺序：
+
+1. 校验压缩包 SHA-256；不一致时停止分析并重新下载。
+2. 核对完整 commit SHA、分支、配置、随机种子、环境、命令和退出码。
+3. 检查预期 CSV／JSON、图像、日志和文件数量是否齐全，区分完整结果与部分结果。
+4. 先报告原始指标和样本量，再比较 baseline 与 full；同时报告绝对差、相对差和质量—攻击权衡。
+5. 检查失败样本、离群值、缺失值和统计不确定性；小样本筛选结果不得表述成稳定结论。
+6. 生成可直接用于后续实验讨论的 Markdown 分析报告、汇总表和必要图形，并列出缺失信息。
+
+只有 SHA-256 校验通过、Codex 能正常解压读取、关键结果文件完整后，才允许清理 AutoDL 压缩包。
+
+### 7.4 本地确认后清理 AutoDL 压缩文件
+
+远端清理属于不可恢复操作。先由用户确认本地压缩包、校验文件和 Codex 分析目录均可正常读取，然后只删除该次导出的压缩包及其校验／清单文件；默认保留 AutoDL 中的原始 `outputs/`、`logs/` 和代码。
+
+```bash
+run_id="tree_ring_stage1_20260824_run01"
+export_root="/root/autodl-tmp/experiment_exports"
+archive="$export_root/${run_id}.tar.gz"
+checksum="$export_root/${run_id}.tar.gz.sha256"
+contents="$export_root/${run_id}.contents.txt"
+
+resolved_archive="$(realpath -m "$archive")"
+expected_archive="/root/autodl-tmp/experiment_exports/${run_id}.tar.gz"
+
+echo "$resolved_archive"
+
+if [ "$resolved_archive" = "$expected_archive" ] \
+  && [ -f "$archive" ] \
+  && [ -f "$checksum" ] \
+  && [ -f "$contents" ]; then
+  rm -- "$archive" "$checksum" "$contents"
+  echo "已清理本次导出文件；原始实验结果仍保留在 AutoDL。"
+else
+  echo "路径校验失败或导出文件不完整，未执行删除。"
+fi
+```
+
+不得使用通配符删除 `experiment_exports`，不得删除整个项目目录，也不得自动清理原始实验结果。如需删除原始 `outputs/` 或 `logs/`，必须另行确认准确目录和备份状态。
 
 ## 8. 常见问题处理
 
