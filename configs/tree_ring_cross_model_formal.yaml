@@ -1,11 +1,9 @@
 experiment:
-  name: tree_ring_cross_model_smoke
+  name: tree_ring_cross_model_formal
   seed: 1234
 
 model:
-  # Jain's released cross-model example: SD2-base target, SD1.4 proxy VAE.
-  # The original Stability AI Hub repository was deprecated; this is its
-  # public archival mirror, pinned to the mirror's only commit.
+  # SD2-base is the target generator/detector; SD1.4 VAE is the attack proxy.
   target_model_id: sd2-community/stable-diffusion-2-base
   target_model_revision: f5bc1bd97485577aa0b946fa8a9004e2ec147402
   target_model_variant: fp16
@@ -16,7 +14,6 @@ model:
   disable_safety_checker: true
 
 watermark:
-  # All accepted references share this fixed target watermark key.
   w_seed: 0
   w_channel: 0
   w_radius: 16
@@ -37,20 +34,21 @@ prototype:
 attack:
   lambda_pixel: 2.0
   alpha: 0.0196078431372549  # 5 / 255
-  num_iterations: 200
-  log_every: 20
-  save_steps: [200]
-  snapshot_cover_limit: 2
+  num_iterations: 3000
+  log_every: 100
+  save_steps: [1000, 2000, 3000]
+  snapshot_cover_limit: 5
 
 evaluation:
   p_value_threshold: 0.05
   inversion_steps: 50
-  compute_lpips: false
+  compute_lpips: true
 
 data:
   dataset_name: MS-COCO 2017 validation
   reference_prompts_file: prompts/reference_prompts_cross_model.txt
+  # Reuse the exact detector-positive bank validated by the corrected smoke.
   references_dir: outputs/tree_ring_cross_model_smoke/references
   cover_dir: data/MS-COCO/val2017
-  output_dir: outputs/tree_ring_cross_model_smoke
-  cover_limit: 2
+  output_dir: outputs/tree_ring_cross_model_formal
+  cover_limit: 10

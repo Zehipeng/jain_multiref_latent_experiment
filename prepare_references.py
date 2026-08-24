@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -11,6 +13,11 @@ import torch
 from rmlp.config import load_config, project_path
 from rmlp.models import load_target_pipeline, seed_everything
 from rmlp.reference_bank import accepts_reference, build_candidate_schedule
+from rmlp.reproducibility import (
+    git_provenance,
+    runtime_provenance,
+    sha256_file,
+)
 from rmlp.tree_ring import (
     build_key_and_mask,
     detect_p_value,
@@ -36,7 +43,12 @@ def clear_generated_reference_files(output_dir: Path) -> None:
     for path in output_dir.glob("ref_*.png"):
         if path.is_file():
             path.unlink()
-    for filename in ("metadata.json", "metadata.partial.json", "watermark_key.pt"):
+    for filename in (
+        "metadata.json",
+        "metadata.partial.json",
+        "watermark_key.pt",
+        "config_snapshot.yaml",
+    ):
         path = output_dir / filename
         if path.is_file():
             path.unlink()
@@ -75,6 +87,8 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     if args.overwrite:
         clear_generated_reference_files(output_dir)
+    config_path = Path(config["_config_path"])
+    shutil.copyfile(config_path, output_dir / "config_snapshot.yaml")
 
     pipe = load_target_pipeline(config)
     w_key, w_mask = build_key_and_mask(pipe, config)
@@ -123,10 +137,12 @@ def main() -> None:
         index = len(records)
         filename = f"ref_{index:02d}_gseed_{candidate.generation_seed}.png"
         image.save(output_dir / filename)
+        image_sha256 = sha256_file(output_dir / filename)
         records.append(
             {
                 "index": index,
                 "filename": filename,
+                "sha256": image_sha256,
                 **candidate_record,
             }
         )
@@ -146,6 +162,25 @@ def main() -> None:
         "target_model_id": config["model"]["target_model_id"],
         "target_model_revision": config["model"].get("target_model_revision"),
         "target_model_variant": config["model"].get("target_model_variant"),
+        "models": {
+            "target": {
+                "id": config["model"]["target_model_id"],
+                "revision": config["model"].get("target_model_revision"),
+                "variant": config["model"].get("target_model_variant"),
+            },
+            "proxy_vae_for_attack": {
+                "id": config["model"]["proxy_vae_model_id"],
+                "revision": config["model"].get("proxy_vae_revision"),
+                "variant": config["model"].get("proxy_vae_variant"),
+            },
+        },
+        "config": {
+            "snapshot": "config_snapshot.yaml",
+            "sha256": sha256_file(config_path),
+        },
+        "git": git_provenance(config["_project_root"]),
+        "runtime": runtime_provenance(),
+        "command": list(sys.argv),
         "watermark": wm,
         "reference_selection": {
             "require_detected": require_detected,
@@ -162,7 +197,8 @@ def main() -> None:
     }
     metadata_name = "metadata.json" if len(records) == n_refs else "metadata.partial.json"
     (output_dir / metadata_name).write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(metadata, ensure_ascii=False, indent=2, allow_nan=False),
+        encoding="utf-8",
     )
     if len(records) != n_refs:
         raise RuntimeError(

@@ -126,7 +126,7 @@ python prepare_references.py \
 ```bash
 python run_forgery.py \
   --config configs/tree_ring_cross_model_smoke.yaml \
-  --mode both \
+  --mode all \
   --limit 2 \
   --iterations 200 \
   --run-name cross_model_smoke_2x200
@@ -138,6 +138,34 @@ python evaluate.py \
   --run-dir outputs/tree_ring_cross_model_smoke/attacks/cross_model_smoke_2x200 \
   --no-lpips
 ```
+
+修正后的 smoke 必须同时确认：`prototype_diagnostics.json` 中所有参考
+latent 的 `finite=true`，且所有 `distances` 都是有限数值，不能出现
+`Infinity` 或 `NaN`。
+
+## 六-B、运行 10×3000 跨模型正式预实验
+
+正式预实验固定使用 MS-COCO 2017 `val2017` 前 10 张图，比较 Jain 单参考、
+五参考直接平均和稳健 5→4 聚合三种方法：
+
+```bash
+python run_forgery.py \
+  --config configs/tree_ring_cross_model_formal.yaml \
+  --mode all \
+  --limit 10 \
+  --iterations 3000 \
+  --run-name cross_model_pretest_10x3000
+```
+
+```bash
+python evaluate.py \
+  --config configs/tree_ring_cross_model_formal.yaml \
+  --run-dir outputs/tree_ring_cross_model_formal/attacks/cross_model_pretest_10x3000
+```
+
+该实验计算 LPIPS，并只为前 5 张 cover 保存 1000、2000、3000 步快照。
+运行目录还会保存配置快照、Git commit、目标/代理模型 revision、参考库
+checksum、cover 文件 SHA-256 清单和评价结果 checksum。
 
 ## 七、运行第一阶段核心实验
 

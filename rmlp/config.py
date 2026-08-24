@@ -44,6 +44,9 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("attack.alpha must be positive")
     if int(config["attack"]["num_iterations"]) <= 0:
         raise ValueError("attack.num_iterations must be positive")
+    snapshot_cover_limit = int(config["attack"].get("snapshot_cover_limit", 1))
+    if snapshot_cover_limit < 0:
+        raise ValueError("attack.snapshot_cover_limit must be non-negative")
 
 
 def project_path(config: dict[str, Any], value: str | Path) -> Path:

@@ -2,12 +2,13 @@
 
 This folder contains the stage-1 Tree-Ring forgery experiment. It keeps Jain's
 simplified Tree-Ring configuration (`channel=0`, `radius=16`, Jain ring-key
-construction) and compares only:
+construction) and compares:
 
 - `baseline`: Jain optimization toward the first reference latent.
+- `simple_average`: optimization toward the mean of all five reference latents.
 - `full`: the same optimization toward a robust 5-to-4 reference prototype.
 
-The attack objective and optimizer are identical between the two methods. Only
+The attack objective and optimizer are identical between the methods. Only
 the target latent changes.
 
 ## 1. Repository layout
@@ -196,7 +197,7 @@ python prepare_references.py \
 
 python run_forgery.py \
   --config configs/tree_ring_cross_model_smoke.yaml \
-  --mode both \
+  --mode all \
   --limit 2 \
   --iterations 200 \
   --run-name cross_model_smoke_2x200
@@ -210,6 +211,37 @@ python evaluate.py \
 Before running the attack, inspect `outputs/tree_ring_cross_model_smoke/references/metadata.json`
 and confirm `accepted_count=5` and that every accepted reference has
 `p_value <= 0.05`.
+
+The corrected smoke also requires every reference-latent statistic and every
+prototype distance in `prototype_diagnostics.json` to be finite. Prototype
+distances, median centering, and aggregation are computed in fp32; a non-finite
+latent now stops the run instead of silently influencing reference rejection.
+
+## 7.2 Cross-model 10 x 3,000 formal pretest
+
+`configs/tree_ring_cross_model_formal.yaml` fixes the exact SD2 target revision,
+the exact SD1.4 proxy-VAE revision, MS-COCO 2017 `val2017`, five detector-positive
+same-key references, 3,000 optimization steps, and all three methods. It saves
+snapshots at steps 1,000/2,000/3,000 for only the first five covers and computes
+LPIPS during evaluation.
+
+```bash
+python run_forgery.py \
+  --config configs/tree_ring_cross_model_formal.yaml \
+  --mode all \
+  --limit 10 \
+  --iterations 3000 \
+  --run-name cross_model_pretest_10x3000
+
+python evaluate.py \
+  --config configs/tree_ring_cross_model_formal.yaml \
+  --run-dir outputs/tree_ring_cross_model_formal/attacks/cross_model_pretest_10x3000
+```
+
+Each run records a config snapshot and checksum, Git commit/status, package
+versions, target/proxy model IDs and revisions, reference metadata/key checksum,
+and a SHA-256 cover manifest. Evaluation adds `evaluation_manifest.json` with
+the detector settings and result-file checksums.
 
 ## 8. Configuration notes
 

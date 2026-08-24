@@ -24,6 +24,7 @@ def optimize_to_target_latent(
     log_every: int,
     snapshot_steps: set[int] | None = None,
     snapshot_callback: Callable[[int, torch.Tensor], None] | None = None,
+    progress_callback: Callable[[dict[str, float | int]], None] | None = None,
 ) -> AttackResult:
     """Jain latent MSE + pixel MSE optimization with a precomputed target."""
     if cover.ndim == 3:
@@ -51,16 +52,16 @@ def optimize_to_target_latent(
         current = (current - alpha * gradient).clamp(-1.0, 1.0).detach()
 
         if step == 1 or step % log_every == 0 or step == num_iterations:
-            history.append(
-                {
-                    "step": step,
-                    "latent_loss": float(latent_loss.detach().float().cpu()),
-                    "pixel_loss": float(pixel_loss.detach().float().cpu()),
-                    "total_loss": float(total_loss.detach().float().cpu()),
-                }
-            )
+            record = {
+                "step": step,
+                "latent_loss": float(latent_loss.detach().float().cpu()),
+                "pixel_loss": float(pixel_loss.detach().float().cpu()),
+                "total_loss": float(total_loss.detach().float().cpu()),
+            }
+            history.append(record)
+            if progress_callback is not None:
+                progress_callback(record)
         if step in snapshot_steps and snapshot_callback is not None:
             snapshot_callback(step, current)
 
     return AttackResult(adversarial=current, history=history)
-

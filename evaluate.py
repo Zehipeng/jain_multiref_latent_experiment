@@ -4,7 +4,9 @@ import argparse
 import csv
 import json
 import math
+import sys
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +18,11 @@ from tqdm import tqdm
 from rmlp.config import load_config
 from rmlp.image_io import load_rgb, preprocess_pil
 from rmlp.models import load_target_pipeline, seed_everything
+from rmlp.reproducibility import (
+    git_provenance,
+    runtime_provenance,
+    sha256_file,
+)
 from rmlp.tree_ring import build_key_and_mask, detect_p_value
 
 
@@ -35,12 +42,24 @@ def mean(values: list[float]) -> float:
     return float(np.mean(values)) if values else float("nan")
 
 
+def optional_mean(values: list[float]) -> float | None:
+    return float(np.mean(values)) if values else None
+
+
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
     seed_everything(int(config["experiment"]["seed"]))
     run_dir = Path(args.run_dir).expanduser().resolve()
-    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    config_sha256 = sha256_file(config["_config_path"])
+    recorded_config_sha256 = manifest.get("config", {}).get("sha256")
+    if recorded_config_sha256 and recorded_config_sha256 != config_sha256:
+        raise ValueError("Evaluation config does not match the attack config snapshot")
+    recorded_target = manifest.get("models", {}).get("target", {})
+    if recorded_target and recorded_target.get("id") != config["model"]["target_model_id"]:
+        raise ValueError("Evaluation target model does not match the attack manifest")
     pipe = load_target_pipeline(config)
     w_key, w_mask = build_key_and_mask(pipe, config)
     img_size = int(config["watermark"]["img_size"])
@@ -116,19 +135,50 @@ def main() -> None:
             "n": len(method_rows),
             "asr": mean([float(row["success"]) for row in method_rows]),
             "eligible_n": len(eligible_rows),
-            "eligible_asr": mean([float(row["success"]) for row in eligible_rows]),
+            "eligible_asr": optional_mean(
+                [float(row["success"]) for row in eligible_rows]
+            ),
             "clean_false_positives": sum(int(row["clean_false_positive"]) for row in method_rows),
             "mean_p_value": mean(p_values),
             "median_p_value": float(np.median(p_values)),
             "mean_neg_log10_p": mean([float(row["neg_log10_p"]) for row in method_rows]),
             "mean_psnr": mean([float(row["psnr"]) for row in method_rows]),
             "mean_ssim": mean([float(row["ssim"]) for row in method_rows]),
-            "mean_lpips": mean(lpips_values),
+            "mean_lpips": optional_mean(lpips_values),
             "mean_runtime_seconds": mean(runtimes),
             "mean_peak_memory_mb": mean(peak_memory),
         }
     (run_dir / "summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(summary, ensure_ascii=False, indent=2, allow_nan=False),
+        encoding="utf-8",
+    )
+    evaluation_manifest = {
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "command": list(sys.argv),
+        "attack_manifest_sha256": sha256_file(manifest_path),
+        "config_sha256": config_sha256,
+        "target_model": {
+            "id": config["model"]["target_model_id"],
+            "revision": config["model"].get("target_model_revision"),
+            "variant": config["model"].get("target_model_variant"),
+        },
+        "inversion_steps": inversion_steps,
+        "p_value_threshold": threshold,
+        "lpips_enabled": use_lpips,
+        "git": git_provenance(config["_project_root"]),
+        "runtime": runtime_provenance(),
+        "outputs": {
+            "metrics_csv": "metrics.csv",
+            "metrics_sha256": sha256_file(csv_path),
+            "summary_json": "summary.json",
+            "summary_sha256": sha256_file(run_dir / "summary.json"),
+        },
+    }
+    (run_dir / "evaluation_manifest.json").write_text(
+        json.dumps(
+            evaluation_manifest, ensure_ascii=False, indent=2, allow_nan=False
+        ),
+        encoding="utf-8",
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     print(f"metrics written to {csv_path}")
