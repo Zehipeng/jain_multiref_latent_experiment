@@ -172,6 +172,38 @@ python run_forgery.py \
   --run-name confirm_20x7500
 ```
 
+## 7.1 Cross-model smoke with five detector-positive references
+
+The cross-model configuration follows Jain's released example: Tree-Ring
+generation and detection use `stabilityai/stable-diffusion-2-base`, while image
+optimization uses the VAE from `CompVis/stable-diffusion-v1-4`. All accepted
+references share `w_seed=0`. Candidate generation continues until five
+references satisfy `p_value <= 0.05`; rejected candidates are recorded in
+`metadata.json` but are not saved into the attack reference bank.
+
+```bash
+python prepare_references.py \
+  --config configs/tree_ring_cross_model_smoke.yaml \
+  --verify \
+  --overwrite
+
+python run_forgery.py \
+  --config configs/tree_ring_cross_model_smoke.yaml \
+  --mode both \
+  --limit 2 \
+  --iterations 200 \
+  --run-name cross_model_smoke_2x200
+
+python evaluate.py \
+  --config configs/tree_ring_cross_model_smoke.yaml \
+  --run-dir outputs/tree_ring_cross_model_smoke/attacks/cross_model_smoke_2x200 \
+  --no-lpips
+```
+
+Before running the attack, inspect `outputs/tree_ring_cross_model_smoke/references/metadata.json`
+and confirm `accepted_count=5` and that every accepted reference has
+`p_value <= 0.05`.
+
 ## 8. Configuration notes
 
 - `lambda_pixel=2` and `alpha=5/255` follow Jain's hard-coded defaults.

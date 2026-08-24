@@ -97,6 +97,37 @@ python evaluate.py \
 smoke test 只检查程序能否运行、loss 是否下降、图片和评价文件能否生成，
 不用于判断方法效果。
 
+## 六-A、运行跨模型 smoke test
+
+该配置以 SD2-base 作为目标水印生成与检测模型，以 SD1.4 VAE 作为攻击
+代理。参考生成器只收录检测 `p <= 0.05` 的候选图，直到得到 5 张共享
+`w_seed=0` 的有效参考图。
+
+```bash
+python prepare_references.py \
+  --config configs/tree_ring_cross_model_smoke.yaml \
+  --verify \
+  --overwrite
+```
+
+确认 metadata 中 `accepted_count=5` 后运行：
+
+```bash
+python run_forgery.py \
+  --config configs/tree_ring_cross_model_smoke.yaml \
+  --mode both \
+  --limit 2 \
+  --iterations 200 \
+  --run-name cross_model_smoke_2x200
+```
+
+```bash
+python evaluate.py \
+  --config configs/tree_ring_cross_model_smoke.yaml \
+  --run-dir outputs/tree_ring_cross_model_smoke/attacks/cross_model_smoke_2x200 \
+  --no-lpips
+```
+
 ## 七、运行第一阶段核心实验
 
 ```bash

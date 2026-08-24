@@ -28,12 +28,18 @@ def validate_config(config: dict[str, Any]) -> None:
     n_refs = int(prototype["reference_count"])
     n_keep = int(prototype["retain_count"])
     seeds = config["watermark"]["generation_seeds"]
+    selection = config.get("reference_selection", {})
+    max_candidates = int(selection.get("max_candidates", len(seeds)))
     if n_refs < 1:
         raise ValueError("prototype.reference_count must be positive")
     if not 1 <= n_keep <= n_refs:
         raise ValueError("prototype.retain_count must be in [1, reference_count]")
     if len(seeds) < n_refs:
         raise ValueError("Not enough watermark.generation_seeds for reference_count")
+    if max_candidates < n_refs:
+        raise ValueError(
+            "reference_selection.max_candidates must be at least reference_count"
+        )
     if float(config["attack"]["alpha"]) <= 0:
         raise ValueError("attack.alpha must be positive")
     if int(config["attack"]["num_iterations"]) <= 0:
@@ -45,4 +51,3 @@ def project_path(config: dict[str, Any], value: str | Path) -> Path:
     if path.is_absolute():
         return path
     return Path(config["_project_root"]) / path
-
