@@ -37,11 +37,15 @@ python -m pip install -U pip
 python -m pip install -r requirements.txt
 ```
 
+本项目针对 AutoDL 的 PyTorch 2.1.2 + CUDA 12.1 镜像锁定了核心依赖：
+Diffusers 0.30.3、Transformers 4.41.2、Accelerate 0.31.0。不要单独升级
+Transformers；较新的 Transformers 版本不兼容 PyTorch 2.1.2 的 pytree API。
+
 检查环境：
 
 ```bash
 python -m compileall rmlp prepare_references.py run_forgery.py evaluate.py
-pytest -q
+python -m pytest -q
 ```
 
 如 Hugging Face 模型需要授权：
@@ -174,4 +178,3 @@ iterations=3000
 
 先完成 baseline/full 公平比较，再根据结果决定是否调整步数、参考数量或
 加入两阶段质量约束。
-

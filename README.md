@@ -53,6 +53,10 @@ python -m pip install -U pip
 python -m pip install -r requirements.txt
 ```
 
+The core Hugging Face packages are compatibility-locked for the AutoDL
+PyTorch 2.1.2 + CUDA 12.1 image. Do not independently upgrade Transformers;
+newer releases use a pytree API that is unavailable in PyTorch 2.1.2.
+
 If Hugging Face requests authentication:
 
 ```bash
@@ -184,5 +188,5 @@ python run_forgery.py \
 
 ```bash
 python -m compileall rmlp prepare_references.py run_forgery.py evaluate.py
-pytest -q
+python -m pytest -q
 ```

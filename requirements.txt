@@ -1,7 +1,10 @@
 # Install a CUDA-compatible PyTorch build in the AutoDL image first.
-accelerate>=0.28
-diffusers>=0.30,<0.36
-transformers>=4.38,<5
+# Compatibility-locked for the AutoDL PyTorch 2.1.2 + CUDA 12.1 image.
+accelerate==0.31.0
+diffusers==0.30.3
+transformers==4.41.2
+tokenizers==0.19.1
+huggingface-hub==0.23.4
 safetensors>=0.4
 numpy>=1.24
 scipy>=1.10
@@ -11,4 +14,3 @@ tqdm>=4.66
 scikit-image>=0.21
 lpips>=0.1.4
 pytest>=7.4
-
