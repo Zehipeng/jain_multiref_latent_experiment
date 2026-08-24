@@ -109,6 +109,11 @@ smoke test 只检查程序能否运行、loss 是否下降、图片和评价文�
 代理。参考生成器只收录检测 `p <= 0.05` 的候选图，直到得到 5 张共享
 `w_seed=0` 的有效参考图。
 
+原 `stabilityai/stable-diffusion-2-base` Hub 仓库已经废弃，因此配置使用
+其公开归档镜像 `sd2-community/stable-diffusion-2-base`，并固定 revision
+`f5bc1bd97485577aa0b946fa8a9004e2ec147402`。模型身份会写入参考 metadata
+和攻击 manifest。
+
 ```bash
 python prepare_references.py \
   --config configs/tree_ring_cross_model_smoke.yaml \

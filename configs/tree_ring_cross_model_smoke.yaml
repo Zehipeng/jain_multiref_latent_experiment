@@ -4,7 +4,11 @@ experiment:
 
 model:
   # Jain's released cross-model example: SD2-base target, SD1.4 proxy VAE.
-  target_model_id: stabilityai/stable-diffusion-2-base
+  # The original Stability AI Hub repository was deprecated; this is its
+  # public archival mirror, pinned to the mirror's only commit.
+  target_model_id: sd2-community/stable-diffusion-2-base
+  target_model_revision: f5bc1bd97485577aa0b946fa8a9004e2ec147402
+  target_model_variant: fp16
   proxy_vae_model_id: CompVis/stable-diffusion-v1-4
   dtype: float16
   device: cuda

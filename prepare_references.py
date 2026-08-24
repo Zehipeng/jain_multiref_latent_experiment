@@ -144,6 +144,8 @@ def main() -> None:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "config_path": config["_config_path"],
         "target_model_id": config["model"]["target_model_id"],
+        "target_model_revision": config["model"].get("target_model_revision"),
+        "target_model_variant": config["model"].get("target_model_variant"),
         "watermark": wm,
         "reference_selection": {
             "require_detected": require_detected,

@@ -35,6 +35,10 @@ def load_target_pipeline(config: dict[str, Any]) -> StableDiffusionPipeline:
     model_cfg = config["model"]
     dtype = resolve_dtype(model_cfg["dtype"])
     kwargs: dict[str, Any] = {"torch_dtype": dtype}
+    if model_cfg.get("target_model_revision"):
+        kwargs["revision"] = model_cfg["target_model_revision"]
+    if model_cfg.get("target_model_variant"):
+        kwargs["variant"] = model_cfg["target_model_variant"]
     if model_cfg.get("disable_safety_checker", True):
         kwargs.update(safety_checker=None, requires_safety_checker=False)
     pipe = StableDiffusionPipeline.from_pretrained(
@@ -49,10 +53,14 @@ def load_target_pipeline(config: dict[str, Any]) -> StableDiffusionPipeline:
 def load_proxy_vae(config: dict[str, Any]) -> AutoencoderKL:
     model_cfg = config["model"]
     dtype = resolve_dtype(model_cfg["dtype"])
+    kwargs: dict[str, Any] = {"subfolder": "vae", "torch_dtype": dtype}
+    if model_cfg.get("proxy_vae_revision"):
+        kwargs["revision"] = model_cfg["proxy_vae_revision"]
+    if model_cfg.get("proxy_vae_variant"):
+        kwargs["variant"] = model_cfg["proxy_vae_variant"]
     vae = AutoencoderKL.from_pretrained(
-        model_cfg["proxy_vae_model_id"], subfolder="vae", torch_dtype=dtype
+        model_cfg["proxy_vae_model_id"], **kwargs
     ).to(model_cfg["device"])
     vae.eval()
     vae.requires_grad_(False)
     return vae
-

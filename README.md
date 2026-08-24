@@ -179,8 +179,11 @@ python run_forgery.py \
 ## 7.1 Cross-model smoke with five detector-positive references
 
 The cross-model configuration follows Jain's released example: Tree-Ring
-generation and detection use `stabilityai/stable-diffusion-2-base`, while image
-optimization uses the VAE from `CompVis/stable-diffusion-v1-4`. All accepted
+generation and detection use SD2-base, while image optimization uses the VAE
+from `CompVis/stable-diffusion-v1-4`. Because the original Stability AI Hub
+repository was deprecated, the configuration uses the public archival mirror
+`sd2-community/stable-diffusion-2-base` pinned to revision
+`f5bc1bd97485577aa0b946fa8a9004e2ec147402`. All accepted
 references share `w_seed=0`. Candidate generation continues until five
 references satisfy `p_value <= 0.05`; rejected candidates are recorded in
 `metadata.json` but are not saved into the attack reference bank.
