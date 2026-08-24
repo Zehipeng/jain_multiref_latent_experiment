@@ -40,7 +40,6 @@ evaluation:
 data:
   reference_prompts_file: prompts/reference_prompts.txt
   references_dir: outputs/tree_ring_stage1/references
-  cover_dir: data/covers
+  cover_dir: data/MS-COCO
   output_dir: outputs/tree_ring_stage1
   cover_limit: 10
-

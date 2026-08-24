@@ -44,6 +44,6 @@ evaluation:
 data:
   reference_prompts_file: prompts/reference_prompts_cross_model.txt
   references_dir: outputs/tree_ring_cross_model_smoke/references
-  cover_dir: data/covers
+  cover_dir: data/MS-COCO
   output_dir: outputs/tree_ring_cross_model_smoke
   cover_limit: 2

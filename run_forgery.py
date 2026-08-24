@@ -13,7 +13,8 @@ from tqdm import tqdm
 
 from rmlp.attack import optimize_to_target_latent
 from rmlp.config import load_config, project_path
-from rmlp.image_io import list_images, load_rgb, preprocess_pil, safe_stem, tensor_to_pil
+from rmlp.data import list_images
+from rmlp.image_io import load_rgb, preprocess_pil, safe_stem, tensor_to_pil
 from rmlp.models import load_proxy_vae, seed_everything
 from rmlp.prototype import encode_vae_latent, robust_latent_prototype
 

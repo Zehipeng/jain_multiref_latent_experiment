@@ -7,20 +7,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
-
-
-def list_images(directory: str | Path, limit: int | None = None) -> list[Path]:
-    root = Path(directory)
-    if not root.is_dir():
-        raise FileNotFoundError(f"Image directory does not exist: {root}")
-    paths = sorted(p for p in root.iterdir() if p.suffix.lower() in IMAGE_EXTENSIONS)
-    if limit is not None:
-        paths = paths[:limit]
-    if not paths:
-        raise FileNotFoundError(f"No supported images found in: {root}")
-    return paths
+from .data import list_images as list_images
 
 
 def load_rgb(path: str | Path) -> Image.Image:
@@ -58,4 +45,3 @@ def safe_stem(path: str | Path) -> str:
     stem = Path(path).stem
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._")
     return cleaned or "image"
-

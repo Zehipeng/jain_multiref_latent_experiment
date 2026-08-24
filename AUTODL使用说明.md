@@ -56,14 +56,20 @@ huggingface-cli login
 
 ## 四、准备 cover 图像
 
-把至少 10 张无水印 RGB 图像上传到：
+完整 MS-COCO 数据集放在：
 
 ```text
-data/covers/
+data/MS-COCO/
 ```
 
-程序按文件名排序读取，并统一做 512×512 resize 和 center crop。不要把
-参考水印图放入该目录。
+程序会递归扫描其中的 `train2017/`、`val2017/` 等子目录，忽略标注 JSON
+等非图像文件，并按“目录名 + 文件名”确定性读取。设置 `--limit 2` 时找到
+前 2 张图即停止扫描，不会先遍历完整数据集。图像统一做 512×512 resize
+和 center crop。若要固定使用某个 split，可额外指定：
+
+```bash
+--cover-dir data/MS-COCO/val2017
+```
 
 ## 五、生成同密钥参考库
 

@@ -65,17 +65,21 @@ huggingface-cli login
 
 ## 3. Prepare cover images
 
-Put at least ten clean RGB images in a directory, for example:
+Upload MS-COCO under the configured dataset root, for example:
 
 ```text
-data/covers/
-  0001.png
-  0002.jpg
-  ...
+data/MS-COCO/
+  train2017/
+  val2017/
+  annotations/
 ```
 
-The loader performs resize + center crop to 512 x 512. Baseline and full always
-read the same sorted image list.
+The loader recursively scans the dataset root, ignores non-image files, and uses
+a deterministic directory/name order. It stops as soon as `--limit` images have
+been found, so the two-image smoke does not enumerate the entire dataset. Images
+are resized and center-cropped to 512 x 512; baseline and full always receive the
+same cover list. To select one COCO split explicitly, pass for example
+`--cover-dir data/MS-COCO/val2017`.
 
 ## 4. Generate the five-reference bank
 
