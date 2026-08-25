@@ -54,10 +54,16 @@ def clear_generated_reference_files(output_dir: Path) -> None:
             path.unlink()
 
 
-def main() -> None:
-    args = parse_args()
-    config = load_config(args.config)
-    seed_everything(int(config["experiment"]["seed"]))
+def prepare_reference_bank(
+    config: dict,
+    pipe,
+    output_dir: Path,
+    *,
+    verify: bool,
+    overwrite: bool,
+    command: list[str] | None = None,
+) -> dict:
+    """Prepare one detector-positive same-key bank using an already loaded pipe."""
     prompts_path = project_path(config, config["data"]["reference_prompts_file"])
     prompts = [line.strip() for line in prompts_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     n_refs = int(config["prototype"]["reference_count"])
@@ -81,22 +87,20 @@ def main() -> None:
             f"Need at least {n_refs} reference candidates, found {len(candidates)}"
         )
 
-    output_dir = project_path(config, config["data"]["references_dir"])
-    if output_dir.exists() and any(output_dir.iterdir()) and not args.overwrite:
+    if output_dir.exists() and any(output_dir.iterdir()) and not overwrite:
         raise FileExistsError(f"Reference directory is not empty: {output_dir}; pass --overwrite")
     output_dir.mkdir(parents=True, exist_ok=True)
-    if args.overwrite:
+    if overwrite:
         clear_generated_reference_files(output_dir)
     config_path = Path(config["_config_path"])
     shutil.copyfile(config_path, output_dir / "config_snapshot.yaml")
 
-    pipe = load_target_pipeline(config)
     w_key, w_mask = build_key_and_mask(pipe, config)
     torch.save({"w_key": w_key.cpu(), "w_mask": w_mask.cpu()}, output_dir / "watermark_key.pt")
 
     records = []
     rejected_candidates = []
-    must_detect = args.verify or require_detected
+    must_detect = verify or require_detected
     for candidate in candidates:
         image = generate_watermarked_image(
             pipe=pipe,
@@ -180,7 +184,7 @@ def main() -> None:
         },
         "git": git_provenance(config["_project_root"]),
         "runtime": runtime_provenance(),
-        "command": list(sys.argv),
+        "command": command if command is not None else list(sys.argv),
         "watermark": wm,
         "reference_selection": {
             "require_detected": require_detected,
@@ -206,6 +210,21 @@ def main() -> None:
             f"after {len(candidates)} candidates; add seeds or raise max_candidates"
         )
     print(f"reference bank ready: {output_dir}")
+    return metadata
+
+
+def main() -> None:
+    args = parse_args()
+    config = load_config(args.config)
+    seed_everything(int(config["experiment"]["seed"]))
+    pipe = load_target_pipeline(config)
+    prepare_reference_bank(
+        config,
+        pipe,
+        project_path(config, config["data"]["references_dir"]),
+        verify=args.verify,
+        overwrite=args.overwrite,
+    )
 
 
 if __name__ == "__main__":

@@ -275,3 +275,54 @@ python -u run_forgery.py \
 
 周期 p 值位于 `detections/simple_average/*.csv`；`manifest.json` 记录
 `executed_iterations`、`first_success_step` 和 `first_success_p_value`。
+
+## 十一、10个密钥与10张Cover一一配对正式实验
+
+本实验不是10×10组合。`key_seeds[i]`只攻击排序后的第`i`张Cover：每种方法
+10次攻击，共20次。Baseline使用对应密钥参考库的第1张图；Simple Average
+使用同一参考库全部5张图。其他参数完全相同。
+
+先准备10个密钥各5张检测通过的参考图：
+
+```bash
+python -u prepare_multikey_references.py \
+  --config configs/tree_ring_multikey_paired_10x15000.yaml \
+  --verify \
+  --skip-existing \
+  2>&1 | tee logs/prepare_multikey_10keys.log
+```
+
+建议先用前2对做smoke，再使用新run name执行10对正式实验：
+
+```bash
+python -u run_multikey_forgery.py \
+  --config configs/tree_ring_multikey_paired_10x15000.yaml \
+  --pair-count 2 \
+  --iterations 300 \
+  --lambda-pixel 10000 \
+  --detection-every 100 \
+  --run-name paired_multikey_smoke_2x300 \
+  2>&1 | tee logs/paired_multikey_smoke_2x300.log
+```
+
+正式实验：
+
+```bash
+python -u run_multikey_forgery.py \
+  --config configs/tree_ring_multikey_paired_10x15000.yaml \
+  --pair-count 10 \
+  --iterations 15000 \
+  --lambda-pixel 10000 \
+  --detection-every 100 \
+  --run-name paired_10keys_10covers_15000 \
+  2>&1 | tee logs/paired_10keys_10covers_15000_attack.log
+
+python -u evaluate_multikey.py \
+  --config configs/tree_ring_multikey_paired_10x15000.yaml \
+  --run-dir outputs/tree_ring_multikey_paired/attacks/paired_10keys_10covers_15000 \
+  2>&1 | tee logs/paired_10keys_10covers_15000_evaluate.log
+```
+
+核心结果是`metrics.csv`、`paired_metrics.csv`、`asr_by_iteration.csv`和
+`summary.json`。其中`asr_by_iteration.csv`比较两种方法在每个相同迭代预算
+下的累计攻击成功率。

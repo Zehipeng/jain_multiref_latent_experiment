@@ -47,6 +47,18 @@ def validate_config(config: dict[str, Any]) -> None:
     snapshot_cover_limit = int(config["attack"].get("snapshot_cover_limit", 1))
     if snapshot_cover_limit < 0:
         raise ValueError("attack.snapshot_cover_limit must be non-negative")
+    if "multikey" in config:
+        key_seeds = [int(seed) for seed in config["multikey"]["key_seeds"]]
+        if not key_seeds:
+            raise ValueError("multikey.key_seeds must not be empty")
+        if len(set(key_seeds)) != len(key_seeds):
+            raise ValueError("multikey.key_seeds must be unique")
+        if any(seed < 0 for seed in key_seeds):
+            raise ValueError("multikey.key_seeds must be non-negative")
+        if int(config["data"]["cover_limit"]) != len(key_seeds):
+            raise ValueError(
+                "Paired multi-key config requires cover_limit == number of keys"
+            )
 
 
 def project_path(config: dict[str, Any], value: str | Path) -> Path:

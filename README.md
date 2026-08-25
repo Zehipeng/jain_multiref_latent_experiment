@@ -275,12 +275,46 @@ python -u run_forgery.py \
   stopping.
 - A clean image already satisfying `p <= 0.05` is a detector false positive and
   must be flagged when interpreting ASR.
-- This code does not yet include two-stage optimization, confidence weighting,
-  LPIPS loss, removal, or multi-key evaluation.
+- This code does not include two-stage optimization, confidence weighting,
+  LPIPS loss, or removal. Multi-key paired evaluation is provided in Section 10.
 
 ## 9. Local checks without model downloads
 
 ```bash
-python -m compileall rmlp prepare_references.py run_forgery.py evaluate.py
+python -m compileall rmlp prepare_references.py prepare_multikey_references.py \
+  run_forgery.py run_multikey_forgery.py evaluate.py evaluate_multikey.py
 python -m pytest -q
 ```
+
+## 10. Paired 10-key experiment: baseline vs five-reference average
+
+`configs/tree_ring_multikey_paired_10x15000.yaml` defines ten one-to-one
+key-cover pairs. Key `i` attacks only cover `i`, so each method runs ten attacks
+(twenty total), not a 10 x 10 Cartesian product. Baseline uses reference index
+zero for the key; Simple Average uses all five references. Both methods use
+`lambda_pixel=1e4`, `alpha=5/255`, target detection every 100 steps, earliest
+success stopping, and a maximum budget of 15,000 steps.
+
+```bash
+python -u prepare_multikey_references.py \
+  --config configs/tree_ring_multikey_paired_10x15000.yaml \
+  --verify \
+  --skip-existing
+
+python -u run_multikey_forgery.py \
+  --config configs/tree_ring_multikey_paired_10x15000.yaml \
+  --pair-count 10 \
+  --iterations 15000 \
+  --lambda-pixel 10000 \
+  --detection-every 100 \
+  --run-name paired_10keys_10covers_15000
+
+python -u evaluate_multikey.py \
+  --config configs/tree_ring_multikey_paired_10x15000.yaml \
+  --run-dir outputs/tree_ring_multikey_paired/attacks/paired_10keys_10covers_15000
+```
+
+Evaluation produces `metrics.csv`, `paired_metrics.csv`,
+`asr_by_iteration.csv`, and `summary.json`. The ASR curve is cumulative by
+first-success step, allowing a fair comparison under every shared iteration
+budget while still stopping successful attacks before later distortion.
