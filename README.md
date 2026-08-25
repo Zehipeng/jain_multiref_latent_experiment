@@ -246,10 +246,33 @@ the detector settings and result-file checksums.
 ## 8. Configuration notes
 
 - `lambda_pixel=2` and `alpha=5/255` follow Jain's hard-coded defaults.
+
+## 8.1 Simple Average + Jain lambda smoke with earliest-success stopping
+
+`configs/tree_ring_simple_average_lambda1e4_smoke.yaml` uses all five shared-key
+references directly (no robust reference rejection), the official Jain Tree-Ring
+README value `lambda_pixel=1e4`, and a maximum budget of 3000 optimization steps.
+The SD2-base target detector runs every 100 steps. The first checkpoint with
+`p_value <= 0.05` is retained as the final output and optimization stops, avoiding
+unnecessary later distortion. Each sample records its full periodic detector trace
+under `detections/simple_average/` and its earliest success in `manifest.json`.
+
+```bash
+python -u run_forgery.py \
+  --config configs/tree_ring_simple_average_lambda1e4_smoke.yaml \
+  --mode simple_average \
+  --limit 2 \
+  --iterations 3000 \
+  --lambda-pixel 10000 \
+  --detection-every 100 \
+  --early-stop-on-success \
+  --run-name simple_average_lambda1e4_smoke_2x3000
+```
 - The first run uses SD 1.4 for both the target and proxy VAE to obtain a quick
   feasibility result. Cross-model transfer is a later experiment.
-- The detector is never queried during optimization. It is used only in the
-  separate evaluation step.
+- Legacy configurations query the detector only during separate evaluation.
+  The Section 8.1 smoke explicitly enables periodic detection for earliest-success
+  stopping.
 - A clean image already satisfying `p <= 0.05` is a detector false positive and
   must be flagged when interpreting ASR.
 - This code does not yet include two-stage optimization, confidence weighting,

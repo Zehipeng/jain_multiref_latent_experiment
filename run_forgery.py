@@ -17,7 +17,7 @@ from rmlp.attack import optimize_to_target_latent
 from rmlp.config import load_config, project_path
 from rmlp.data import list_images
 from rmlp.image_io import load_rgb, preprocess_pil, safe_stem, tensor_to_pil
-from rmlp.models import load_proxy_vae, seed_everything
+from rmlp.models import load_proxy_vae, load_target_pipeline, seed_everything
 from rmlp.prototype import (
     encode_vae_latent,
     latent_statistics,
@@ -30,6 +30,7 @@ from rmlp.reproducibility import (
     runtime_provenance,
     sha256_file,
 )
+from rmlp.tree_ring import build_key_and_mask, detect_p_value
 
 
 MODE_METHODS = {
@@ -51,6 +52,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--iterations", type=int, default=None)
+    parser.add_argument("--lambda-pixel", type=float, default=None)
+    parser.add_argument("--detection-every", type=int, default=None)
+    parser.add_argument(
+        "--early-stop-on-success",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Stop at the first periodic target-detector p-value <= threshold.",
+    )
     parser.add_argument("--skip-existing", action="store_true")
     return parser.parse_args()
 
@@ -106,6 +115,16 @@ def write_history(path: Path, history: list[dict[str, float | int]]) -> None:
         writer.writerows(history)
 
 
+def write_detection_history(
+    path: Path, history: list[dict[str, float | int | bool]]
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["step", "p_value", "success"])
+        writer.writeheader()
+        writer.writerows(history)
+
+
 def write_manifest(path: Path, payload: dict) -> None:
     temporary = path.with_suffix(".json.tmp")
     temporary.write_text(
@@ -121,7 +140,7 @@ def main() -> None:
     seed_everything(int(config["experiment"]["seed"]))
     img_size = int(config["watermark"]["img_size"])
     n_refs = int(config["prototype"]["reference_count"])
-    retain_count = int(config["prototype"]["retain_count"])
+    methods = MODE_METHODS[args.mode]
     reference_dir = project_path(config, config["data"]["references_dir"])
     reference_paths, reference_metadata_path, reference_metadata = load_reference_bank(
         reference_dir, n_refs, config
@@ -133,15 +152,17 @@ def main() -> None:
         tensor = preprocess_pil(load_rgb(path), img_size)
         reference_latents.append(encode_vae_latent(vae, tensor)[0])
     stacked = torch.stack(reference_latents, dim=0)
-    robust = robust_latent_prototype(stacked, retain_count)
     baseline_target = stacked[0].float().unsqueeze(0)
     simple_target = simple_average_prototype(stacked).unsqueeze(0)
-    full_target = robust.prototype.unsqueeze(0)
     targets = {
         "baseline": baseline_target,
         "simple_average": simple_target,
-        "full": full_target,
     }
+    robust = None
+    if "full" in methods:
+        retain_count = int(config["prototype"]["retain_count"])
+        robust = robust_latent_prototype(stacked, retain_count)
+        targets["full"] = robust.prototype.unsqueeze(0)
 
     cover_dir = (
         Path(args.cover_dir).expanduser().resolve()
@@ -150,8 +171,36 @@ def main() -> None:
     )
     limit = args.limit if args.limit is not None else int(config["data"]["cover_limit"])
     cover_paths = list_images(cover_dir, limit)
-    methods = MODE_METHODS[args.mode]
-    iterations = args.iterations or int(config["attack"]["num_iterations"])
+    iterations = (
+        args.iterations
+        if args.iterations is not None
+        else int(config["attack"]["num_iterations"])
+    )
+    lambda_pixel = (
+        args.lambda_pixel
+        if args.lambda_pixel is not None
+        else float(config["attack"]["lambda_pixel"])
+    )
+    detection_every = (
+        args.detection_every
+        if args.detection_every is not None
+        else config["attack"].get("detection_every")
+    )
+    detection_every = int(detection_every) if detection_every is not None else None
+    early_stop_on_success = (
+        args.early_stop_on_success
+        if args.early_stop_on_success is not None
+        else bool(config["attack"].get("early_stop_on_success", False))
+    )
+    detection_threshold = float(config["evaluation"]["p_value_threshold"])
+    if iterations <= 0:
+        raise ValueError("iterations must be positive")
+    if lambda_pixel < 0:
+        raise ValueError("lambda_pixel must be non-negative")
+    if detection_every is not None and detection_every <= 0:
+        raise ValueError("detection_every must be positive")
+    if early_stop_on_success and detection_every is None:
+        raise ValueError("early_stop_on_success requires periodic detection")
     configured_steps = {int(step) for step in config["attack"].get("save_steps", [])}
     snapshot_steps = {step for step in configured_steps if step <= iterations}
     snapshot_cover_limit = int(config["attack"].get("snapshot_cover_limit", limit))
@@ -175,25 +224,40 @@ def main() -> None:
             raise ValueError("Cannot resume a run with a different method set")
         if existing_manifest.get("config", {}).get("sha256") != config_sha256:
             raise ValueError("Cannot resume a run with a different configuration")
+        existing_attack = existing_manifest.get("attack", {})
+        resume_values = {
+            "lambda_pixel": lambda_pixel,
+            "detection_every": detection_every,
+            "detection_threshold": detection_threshold,
+            "early_stop_on_success": early_stop_on_success,
+        }
+        for key, value in resume_values.items():
+            if key in existing_attack and existing_attack[key] != value:
+                raise ValueError(f"Cannot resume a run with a different {key}")
+            if key not in existing_attack and detection_every is not None:
+                raise ValueError(f"Existing manifest does not record {key}")
     run_dir.mkdir(parents=True, exist_ok=True)
     config_snapshot = run_dir / "config_snapshot.yaml"
     reference_snapshot = run_dir / "reference_metadata_snapshot.json"
     shutil.copyfile(config_path, config_snapshot)
     shutil.copyfile(reference_metadata_path, reference_snapshot)
 
-    torch.save(
-        {
+    prototype_artifacts = {
             "baseline_target": baseline_target.cpu(),
             "simple_average_target": simple_target.cpu(),
-            "full_target": full_target.cpu(),
             "reference_latents": stacked.cpu(),
-            "median_center": robust.median_center.cpu(),
-            "distances": robust.distances.cpu(),
-            "retained_indices": robust.retained_indices.cpu(),
-            "rejected_indices": robust.rejected_indices.cpu(),
-        },
-        run_dir / "prototype_artifacts.pt",
-    )
+    }
+    if robust is not None:
+        prototype_artifacts.update(
+            {
+                "full_target": robust.prototype.unsqueeze(0).cpu(),
+                "median_center": robust.median_center.cpu(),
+                "distances": robust.distances.cpu(),
+                "retained_indices": robust.retained_indices.cpu(),
+                "rejected_indices": robust.rejected_indices.cpu(),
+            }
+        )
+    torch.save(prototype_artifacts, run_dir / "prototype_artifacts.pt")
     reference_stats = [
         {
             "index": index,
@@ -205,12 +269,23 @@ def main() -> None:
     diagnostics = {
         "reference_paths": [str(path) for path in reference_paths],
         "reference_latent_statistics": reference_stats,
-        "distances": [float(v) for v in robust.distances.cpu()],
-        "retained_indices": robust.retained_indices.cpu().tolist(),
-        "rejected_indices": robust.rejected_indices.cpu().tolist(),
+        "reference_filtering_applied": robust is not None,
+        "distances": (
+            [float(v) for v in robust.distances.cpu()] if robust is not None else []
+        ),
+        "retained_indices": (
+            robust.retained_indices.cpu().tolist()
+            if robust is not None
+            else list(range(n_refs))
+        ),
+        "rejected_indices": (
+            robust.rejected_indices.cpu().tolist() if robust is not None else []
+        ),
         "baseline_target_statistics": latent_statistics(baseline_target),
         "simple_average_target_statistics": latent_statistics(simple_target),
-        "full_target_statistics": latent_statistics(full_target),
+        "full_target_statistics": (
+            latent_statistics(targets["full"]) if robust is not None else None
+        ),
     }
     (run_dir / "prototype_diagnostics.json").write_text(
         json.dumps(diagnostics, ensure_ascii=False, indent=2, allow_nan=False),
@@ -266,9 +341,12 @@ def main() -> None:
             "watermark": config["watermark"],
             "prototype": config["prototype"],
             "attack": {
-                "lambda_pixel": float(config["attack"]["lambda_pixel"]),
+                "lambda_pixel": lambda_pixel,
                 "alpha": float(config["attack"]["alpha"]),
                 "iterations": iterations,
+                "detection_every": detection_every,
+                "detection_threshold": detection_threshold,
+                "early_stop_on_success": early_stop_on_success,
                 "snapshot_steps": sorted(snapshot_steps),
                 "snapshot_cover_limit": snapshot_cover_limit,
             },
@@ -296,6 +374,19 @@ def main() -> None:
         (entry["sample_id"], entry["method"]): entry
         for entry in manifest.get("entries", [])
     }
+
+    detector_pipe = None
+    detector_key = None
+    detector_mask = None
+    if detection_every is not None:
+        print(
+            f"loading target detector: every={detection_every} "
+            f"threshold={detection_threshold} early_stop={early_stop_on_success}",
+            flush=True,
+        )
+        detector_pipe = load_target_pipeline(config)
+        detector_key, detector_mask = build_key_and_mask(detector_pipe, config)
+    inversion_steps = int(config["evaluation"]["inversion_steps"])
 
     for cover_index, cover_path in enumerate(tqdm(cover_paths, desc="covers")):
         cover_pil = load_rgb(cover_path)
@@ -341,12 +432,36 @@ def main() -> None:
                     flush=True,
                 )
 
+            def run_periodic_detection(
+                step: int,
+                tensor: torch.Tensor,
+                *,
+                _method=method,
+                _sample=sample_id,
+            ) -> float:
+                if detector_pipe is None or detector_key is None or detector_mask is None:
+                    raise RuntimeError("Periodic detector is not initialized")
+                p_value = detect_p_value(
+                    tensor_to_pil(tensor),
+                    detector_pipe,
+                    detector_key,
+                    detector_mask,
+                    img_size,
+                    inversion_steps,
+                )
+                print(
+                    f"detect sample={_sample} method={_method} step={step}/{iterations} "
+                    f"p_value={p_value:.8g} success={p_value <= detection_threshold}",
+                    flush=True,
+                )
+                return p_value
+
             started = time.perf_counter()
             result = optimize_to_target_latent(
                 cover=cover_tensor,
                 target_latent=target,
                 vae=vae,
-                lambda_pixel=float(config["attack"]["lambda_pixel"]),
+                lambda_pixel=lambda_pixel,
                 alpha=float(config["attack"]["alpha"]),
                 num_iterations=iterations,
                 log_every=int(config["attack"]["log_every"]),
@@ -357,6 +472,12 @@ def main() -> None:
                     save_snapshot if cover_index < snapshot_cover_limit else None
                 ),
                 progress_callback=report_progress,
+                detection_every=detection_every,
+                detection_callback=(
+                    run_periodic_detection if detection_every is not None else None
+                ),
+                detection_threshold=detection_threshold,
+                stop_on_detection=early_stop_on_success,
             )
             runtime_seconds = time.perf_counter() - started
             peak_memory_mb = (
@@ -367,6 +488,10 @@ def main() -> None:
             tensor_to_pil(result.adversarial).save(output_path)
             history_path = run_dir / "logs" / method / f"{sample_id}.csv"
             write_history(history_path, result.history)
+            detection_history_path = (
+                run_dir / "detections" / method / f"{sample_id}.csv"
+            )
+            write_detection_history(detection_history_path, result.detection_history)
             new_entry = {
                 "sample_id": sample_id,
                 "method": method,
@@ -374,6 +499,14 @@ def main() -> None:
                 "clean_export": str(clean_export.relative_to(run_dir)),
                 "output": str(output_path.relative_to(run_dir)),
                 "history": str(history_path.relative_to(run_dir)),
+                "detection_history": str(
+                    detection_history_path.relative_to(run_dir)
+                ),
+                "requested_iterations": iterations,
+                "executed_iterations": result.executed_iterations,
+                "early_stopped": result.executed_iterations < iterations,
+                "first_success_step": result.first_success_step,
+                "first_success_p_value": result.first_success_p_value,
                 "runtime_seconds": runtime_seconds,
                 "peak_memory_mb": peak_memory_mb,
             }

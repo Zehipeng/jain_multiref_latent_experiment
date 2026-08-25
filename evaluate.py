@@ -111,6 +111,10 @@ def main() -> None:
                 "lpips": lpips_value,
                 "runtime_seconds": entry.get("runtime_seconds"),
                 "peak_memory_mb": entry.get("peak_memory_mb"),
+                "requested_iterations": entry.get("requested_iterations"),
+                "executed_iterations": entry.get("executed_iterations"),
+                "first_success_step": entry.get("first_success_step"),
+                "first_success_p_value": entry.get("first_success_p_value"),
                 "output": entry["output"],
             }
         )
@@ -131,6 +135,16 @@ def main() -> None:
         eligible_rows = [row for row in method_rows if not int(row["clean_false_positive"])]
         runtimes = [float(row["runtime_seconds"]) for row in method_rows if row["runtime_seconds"] is not None]
         peak_memory = [float(row["peak_memory_mb"]) for row in method_rows if row["peak_memory_mb"] is not None]
+        executed_iterations = [
+            float(row["executed_iterations"])
+            for row in method_rows
+            if row["executed_iterations"] is not None
+        ]
+        first_success_steps = [
+            float(row["first_success_step"])
+            for row in method_rows
+            if row["first_success_step"] is not None
+        ]
         summary[method] = {
             "n": len(method_rows),
             "asr": mean([float(row["success"]) for row in method_rows]),
@@ -147,6 +161,8 @@ def main() -> None:
             "mean_lpips": optional_mean(lpips_values),
             "mean_runtime_seconds": mean(runtimes),
             "mean_peak_memory_mb": mean(peak_memory),
+            "mean_executed_iterations": mean(executed_iterations),
+            "mean_first_success_step": optional_mean(first_success_steps),
         }
     (run_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2, allow_nan=False),

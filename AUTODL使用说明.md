@@ -252,3 +252,26 @@ iterations=3000
 
 先完成 baseline/full 公平比较，再根据结果决定是否调整步数、参考数量或
 加入两阶段质量约束。
+
+## 十、Simple Average：λ=10⁴ 与每 100 步最早成功停止
+
+本实验直接平均全部 5 张同 key 参考图，不执行稳健参考筛选。3000 步是最大
+预算；每 100 步调用一次 SD2-base 目标检测器。首次 `p_value <= 0.05` 时立即
+保存当前图像并停止该样本，终端会持续显示 `progress` 与 `detect` 行。
+
+```bash
+run_name="simple_average_lambda1e4_smoke_2x3000"
+python -u run_forgery.py \
+  --config configs/tree_ring_simple_average_lambda1e4_smoke.yaml \
+  --mode simple_average \
+  --limit 2 \
+  --iterations 3000 \
+  --lambda-pixel 10000 \
+  --detection-every 100 \
+  --early-stop-on-success \
+  --run-name "$run_name" \
+  2>&1 | tee "logs/${run_name}_attack.log"
+```
+
+周期 p 值位于 `detections/simple_average/*.csv`；`manifest.json` 记录
+`executed_iterations`、`first_success_step` 和 `first_success_p_value`。
