@@ -30,6 +30,9 @@ git remote -v
 5. 推送当前分支到 GitHub。
 6. 推送完成后报告：分支名、完整 commit SHA、远端仓库地址，以及可直接复制到 AutoDL 的拉取命令。
 7. AutoDL 必须拉取并运行该同一 commit；实验记录中必须保存 commit、配置、模型路径、随机种子和实际运行命令。
+8. 用户要求修改本项目代码、配置、测试或运行脚本时，Codex 在完成相关检查后，默认自动将**本次任务涉及的文件**创建独立 commit 并推送到当前 GitHub 分支，然后生成带 AutoDL 网络加速、HTTP/1.1、`fetch && merge --ff-only` 和完整 commit 核验的可复制命令。除非用户明确要求暂不提交或暂不推送，否则不应停留在“仅本地修改”状态。
+
+上述自动同步规则不扩大暂存范围：仍然只能显式暂存当前任务文件，不得使用 `git add .`，不得包含用户已有的无关修改、数据集、模型、日志或实验结果。若检查失败、GitHub 认证失败、远端发生分歧或需要破坏性处理，Codex 应停止自动同步并报告具体阻塞，不得强推或覆盖历史。
 
 ## 3. 本地电脑：首次连接 GitHub（只做一次）
 
@@ -79,7 +82,7 @@ Windows 上使用 HTTPS 推送时，首次认证应通过 Git Credential Manager
 
 ## 4. 本地电脑：日常修改与推送
 
-远端和上游分支建立后，每次只需：
+远端和上游分支建立后，Codex 每次完成代码、配置、测试或运行脚本修改并通过相应检查后，应自动执行以下流程；用户无需再次单独提醒“同步到 GitHub”：
 
 ```bash
 git status --short
@@ -88,16 +91,54 @@ git commit -m "<清楚描述本次修改>"
 git push
 ```
 
-推送前还应运行与本次改动直接相关的检查。不要使用 `git add .` 把无关文件一并提交；不要使用强制推送或覆盖远端历史，除非用户明确授权。
+推送前还应运行与本次改动直接相关的检查。不要使用 `git add .` 把无关文件一并提交；不要使用强制推送或覆盖远端历史，除非用户明确授权。推送完成后，Codex 必须立即报告完整 commit SHA，并按第6节生成 AutoDL 拉取和核验指令。
 
 ## 5. AutoDL：首次获取项目（每台实例只做一次）
+
+### 5.1 访问 GitHub 前必须先启用 AutoDL 网络加速
+
+AutoDL 容器直连 GitHub 时可能出现以下错误：
+
+```text
+GnuTLS recv error (-110): The TLS connection was non-properly terminated
+SSL connection timeout
+```
+
+因此，在 AutoDL 中执行 `git clone`、`git fetch`、`git pull` 或其他需要访问 GitHub 的命令前，必须先在**当前终端会话**中检测并加载 AutoDL 网络加速脚本：
+
+```bash
+if [ -f /etc/network_turbo ]; then
+    source /etc/network_turbo
+    echo "AutoDL network turbo enabled"
+else
+    echo "/etc/network_turbo does not exist"
+fi
+```
+
+`source /etc/network_turbo` 设置的网络环境通常只对当前终端会话有效。新建终端、重新登录容器或重启实例后，在第一次访问 GitHub 前应重新执行。不得通过关闭 SSL 验证规避网络问题，例如不得执行 `git config http.sslVerify false`。
+
+随后建议在项目仓库中固定使用 HTTP/1.1，以降低部分 AutoDL 网络环境中 HTTP/2/TLS 连接异常的概率：
+
+```bash
+git config --local http.version HTTP/1.1
+```
+
+如果尚未进入 Git 仓库（例如准备首次 `clone`），可在单次命令中指定 HTTP/1.1：
+
+```bash
+git -c http.version=HTTP/1.1 clone https://github.com/Zehipeng/jain_multiref_latent_experiment.git
+```
 
 此仓库为公开仓库时，推荐用 HTTPS clone，拉取源码不需要 GitHub 登录或 SSH 密钥：
 
 ```bash
 cd /root/autodl-tmp/project
-git clone https://github.com/Zehipeng/jain_multiref_latent_experiment.git
+if [ -f /etc/network_turbo ]; then
+    source /etc/network_turbo
+fi
+git -c http.version=HTTP/1.1 clone https://github.com/Zehipeng/jain_multiref_latent_experiment.git
 cd /root/autodl-tmp/project/jain_multiref_latent_experiment
+git config --local http.version HTTP/1.1
 git remote -v
 git log -1 --oneline
 git status --short
@@ -107,24 +148,61 @@ git status --short
 
 ## 6. AutoDL：以后每次同步代码
 
-本地 Codex 推送完成后，在 AutoDL 执行：
+本地 Codex 推送完成后，在 AutoDL 执行。这里将远端抓取和本地快进合并用 `&&` 连接；只有 `fetch` 成功时才执行 `merge`，避免抓取失败后仍使用陈旧的本地 `origin/main` 并误判为“Already up to date”：
 
 ```bash
 cd /root/autodl-tmp/project/jain_multiref_latent_experiment
+
+if [ -f /etc/network_turbo ]; then
+    source /etc/network_turbo
+    echo "AutoDL network turbo enabled"
+else
+    echo "/etc/network_turbo does not exist"
+fi
+
+git config --local http.version HTTP/1.1
 git switch <本地推送的分支名>
-git pull --ff-only
-git log -1 --format=fuller
-git status --short
+
+git -c http.version=HTTP/1.1 fetch --no-tags origin <本地推送的分支名> \
+&& git merge --ff-only origin/<本地推送的分支名> \
+&& git rev-parse HEAD \
+&& git status --short
 ```
+
+对于本项目当前的 `main` 分支，可直接复制：
+
+```bash
+cd /root/autodl-tmp/project/jain_multiref_latent_experiment
+
+if [ -f /etc/network_turbo ]; then
+    source /etc/network_turbo
+    echo "AutoDL network turbo enabled"
+else
+    echo "/etc/network_turbo does not exist"
+fi
+
+git config --local http.version HTTP/1.1
+git switch main
+
+git -c http.version=HTTP/1.1 fetch --no-tags origin main \
+&& git merge --ff-only origin/main \
+&& git rev-parse HEAD \
+&& git status --short
+```
+
+如果 `fetch` 报错，后续 `merge` 不会执行。此时不得单独运行 `git merge origin/main`，因为本地的 `origin/main` 可能仍是旧缓存；应先解决网络连接并确保 `fetch` 成功。
 
 若远端有一个尚未在 AutoDL 建立的工作分支，首次拉取该分支使用：
 
 ```bash
 cd /root/autodl-tmp/project/jain_multiref_latent_experiment
-git fetch origin
-git switch -c <分支名> --track origin/<分支名>
-git log -1 --format=fuller
-git status --short
+if [ -f /etc/network_turbo ]; then
+    source /etc/network_turbo
+fi
+git -c http.version=HTTP/1.1 fetch --no-tags origin <分支名> \
+&& git switch -c <分支名> --track origin/<分支名> \
+&& git rev-parse HEAD \
+&& git status --short
 ```
 
 核对规则：
@@ -290,15 +368,37 @@ git remote set-url origin https://github.com/Zehipeng/jain_multiref_latent_exper
 
 ### AutoDL 的 `git pull --ff-only` 失败
 
-先执行以下只读检查并保留输出：
+如果错误包含 `GnuTLS recv error (-110)` 或 `SSL connection timeout`，先重新加载当前终端会话的 AutoDL 网络加速，再使用 HTTP/1.1 重新抓取：
 
 ```bash
+if [ -f /etc/network_turbo ]; then
+    source /etc/network_turbo
+fi
+git config --local http.version HTTP/1.1
+git -c http.version=HTTP/1.1 fetch --no-tags origin main
+```
+
+只有上述 `fetch` 成功后，才执行：
+
+```bash
+git merge --ff-only origin/main
+git rev-parse HEAD
+git status --short
+```
+
+若仍然失败，执行以下只读检查并保留输出：
+
+```bash
+curl --http1.1 --connect-timeout 20 -I https://github.com
+env | grep -i proxy
+git remote -v
 git status --short
 git branch -vv
 git log --oneline --decorate -5
+git config --show-origin --get-regexp 'http\..*|https\..*|.*proxy.*' || true
 ```
 
-不要直接 `git reset --hard`，也不要删除本地文件；应把输出交给 Codex 判断。
+不要直接 `git reset --hard`，不要删除本地文件，不要关闭 SSL 验证，也不要在失败的 `fetch` 之后依据“Already up to date”判断同步成功；应把输出交给 Codex 判断。
 
 ### 本地推送要求重新认证
 
@@ -315,6 +415,10 @@ git log --oneline --decorate -5
 - 先读取本文件，再执行 Git 操作。
 - 不要把旧项目仓库 `https://github.com/Zehipeng/code_fix.git` 设置为本项目的 `origin`。
 - 日常同步不重新执行 `git init`、`git remote add` 或 `git clone`；这些只在首次配置时使用。
-- 本地已配置好远端后使用 `git push`；AutoDL 已 clone 后使用 `git pull --ff-only`。
+- 本地已配置好远端后使用 `git push`；AutoDL 已 clone 后按本文第6节使用 `fetch && merge --ff-only` 同步。
+- AutoDL 每个新终端会话第一次访问 GitHub 前，先检测并执行 `source /etc/network_turbo`，再使用 HTTP/1.1 执行 Git 网络命令。
+- AutoDL 日常同步优先使用“`fetch && merge --ff-only`”串联流程；`fetch` 失败时不得继续合并陈旧的远端跟踪分支。
+- 用户要求修改本项目代码、配置、测试或运行脚本时，完成检查后默认自动创建独立 commit 并推送；除非用户明确要求不提交或不推送，无需再次询问是否同步。
+- 自动推送后必须在同一回复中提供包含网络加速、HTTP/1.1、快进同步和完整 SHA 核验的 AutoDL 命令。
 - 每次推送后都给出 AutoDL 可复制命令，并要求核对完整 commit SHA。
 - 认证或远端异常、需要覆盖历史、发现未说明的本地改动时停止并报告，不自行采取破坏性操作。

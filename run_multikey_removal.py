@@ -15,7 +15,14 @@ from tqdm import tqdm
 from rmlp.attack import optimize_to_target_latent
 from rmlp.config import load_config, project_path
 from rmlp.data import list_images
-from rmlp.image_io import load_rgb, preprocess_pil, safe_stem, tensor_to_pil
+from rmlp.image_io import (
+    latent_to_pil,
+    load_rgb,
+    preprocess_pil,
+    safe_stem,
+    shared_latent_scale,
+    tensor_to_pil,
+)
 from rmlp.models import load_proxy_vae, load_target_pipeline, seed_everything
 from rmlp.multikey import key_directory_name
 from rmlp.prototype import encode_vae_latent, latent_statistics, simple_average_prototype
@@ -33,6 +40,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--pair-count", type=int, default=None)
     parser.add_argument("--iterations", type=int, default=None)
+    parser.add_argument(
+        "--save-visualizations",
+        action="store_true",
+        help="Save smoke-test input, latent, aggregate, target, and output PNGs.",
+    )
     parser.add_argument("--skip-existing", action="store_true")
     return parser.parse_args()
 
@@ -100,8 +112,8 @@ def main() -> None:
         raise FileExistsError(f"Run exists: {run_dir}; use a new name or --skip-existing")
     existing = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else None
     if existing is not None:
-        expected = {"methods": list(REMOVAL_METHODS), "pair_count": pair_count, "iterations": iterations, "detection_every": detection_every, "beta": beta, "lambda_pixel": lambda_pixel}
-        recorded = {"methods": existing.get("methods"), "pair_count": existing.get("pair_count"), "iterations": existing.get("attack", {}).get("iterations"), "detection_every": existing.get("attack", {}).get("detection_every"), "beta": existing.get("removal", {}).get("beta"), "lambda_pixel": existing.get("attack", {}).get("lambda_pixel")}
+        expected = {"methods": list(REMOVAL_METHODS), "pair_count": pair_count, "iterations": iterations, "detection_every": detection_every, "beta": beta, "lambda_pixel": lambda_pixel, "save_visualizations": args.save_visualizations}
+        recorded = {"methods": existing.get("methods"), "pair_count": existing.get("pair_count"), "iterations": existing.get("attack", {}).get("iterations"), "detection_every": existing.get("attack", {}).get("detection_every"), "beta": existing.get("removal", {}).get("beta"), "lambda_pixel": existing.get("attack", {}).get("lambda_pixel"), "save_visualizations": existing.get("visualizations", {}).get("enabled", False)}
         if expected != recorded or existing.get("config", {}).get("sha256") != config_sha256:
             raise ValueError("Cannot resume with different removal-design settings")
 
@@ -123,6 +135,7 @@ def main() -> None:
         "models": {"target": {"id": config["model"]["target_model_id"], "revision": config["model"].get("target_model_revision"), "variant": config["model"].get("target_model_variant")}, "proxy_vae": {"id": config["model"]["proxy_vae_model_id"], "revision": config["model"].get("proxy_vae_revision")}, "dtype": config["model"]["dtype"], "device": config["model"]["device"]},
         "removal": {"beta": beta, "target_reference_index": target_index, "target_in_reference_aggregate": bool(config["removal"].get("target_in_reference_aggregate", True)), "clean_images_per_key": clean_per_key, "methods": {"jain_mean_image": "attract proxy-VAE latent of the target image's constant mean-image", "latent_repulsion": "repel the five-reference watermarked latent mean", "clean_attraction": "attract the five-image clean-prior latent mean", "mean_shift": "attract z_target - beta*(zbar_watermarked-zbar_clean)"}},
         "attack": {"lambda_pixel": lambda_pixel, "alpha": alpha, "iterations": iterations, "log_every": int(config["attack"]["log_every"]), "detection_every": detection_every, "detection_threshold": threshold, "early_stop_on_success": True, "success_rule": "target-key p_value >= threshold"},
+        "visualizations": {"enabled": args.save_visualizations, "format": "four-channel blue-white-red PNG grid with one shared per-key 99.5th-percentile absolute scale; exact tensors are stored in removal_artifacts.pt"},
         "reference_banks": {"snapshot": "reference_multikey_manifest_snapshot.json", "sha256": sha256_file(reference_manifest_path)},
         "clean_prior_manifest": {"path": clean_manifest_path.name, "sha256": sha256_file(clean_manifest_path)},
         "git": git_provenance(config["_project_root"]), "runtime": runtime_provenance(), "commands": [], "entries": [],
@@ -142,6 +155,7 @@ def main() -> None:
         clean_latents = _reference_latents(vae, clean_group, image_size)
         water_mean = simple_average_prototype(watermarked_latents).unsqueeze(0)
         clean_mean = simple_average_prototype(clean_latents).unsqueeze(0)
+        watermark_direction = water_mean - clean_mean
         target_latent = encode_vae_latent(vae, target_tensor).float()
         jain_target = encode_vae_latent(vae, mean_image_target(target_tensor)).float()
         targets = {"jain_mean_image": jain_target, "latent_repulsion": water_mean, "clean_attraction": clean_mean, "mean_shift": mean_shift_target(target_latent, water_mean, clean_mean, beta)}
@@ -150,9 +164,78 @@ def main() -> None:
         sample_id = f"pair_{pair_index:02d}_key_{w_seed:03d}_{safe_stem(target_path)}"
         source_export = run_dir / "sources" / f"{sample_id}.png"; source_export.parent.mkdir(parents=True, exist_ok=True); tensor_to_pil(target_tensor).save(source_export)
         artifact_dir = run_dir / "keys" / key_directory_name(w_seed); artifact_dir.mkdir(parents=True, exist_ok=True)
-        torch.save({"watermarked_reference_latents": watermarked_latents.cpu(), "clean_prior_latents": clean_latents.cpu(), "target_latent": target_latent.cpu(), "watermarked_mean": water_mean.cpu(), "clean_mean": clean_mean.cpu(), "jain_mean_image_target": jain_target.cpu(), "mean_shift_target": targets["mean_shift"].cpu()}, artifact_dir / "removal_artifacts.pt")
+        torch.save({"watermarked_reference_latents": watermarked_latents.cpu(), "clean_prior_latents": clean_latents.cpu(), "target_latent": target_latent.cpu(), "watermarked_mean": water_mean.cpu(), "clean_mean": clean_mean.cpu(), "watermark_direction": watermark_direction.cpu(), "removal_targets": {method: value.cpu() for method, value in targets.items()}}, artifact_dir / "removal_artifacts.pt")
         diagnostics = {"w_seed": w_seed, "target_reference_index": target_index, "target_path": str(target_path), "target_p_value_before_attack": source_p, "watermarked_reference_paths": [str(path) for path in reference_paths], "clean_prior_paths": [str(path) for path in clean_group], "watermarked_latent_statistics": [latent_statistics(value) for value in watermarked_latents], "clean_latent_statistics": [latent_statistics(value) for value in clean_latents]}
         (artifact_dir / "removal_diagnostics.json").write_text(json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8")
+        visualization_dir = run_dir / "visualizations" / key_directory_name(w_seed)
+        if args.save_visualizations:
+            input_dir = visualization_dir / "input_images"
+            latent_dir = visualization_dir / "latent_representations"
+            aggregate_dir = visualization_dir / "aggregate_latents"
+            target_dir = visualization_dir / "removal_targets"
+            removed_dir = visualization_dir / "removed_images"
+            for directory in (input_dir, latent_dir, aggregate_dir, target_dir, removed_dir):
+                directory.mkdir(parents=True, exist_ok=True)
+            for index, path in enumerate(reference_paths):
+                load_rgb(path).save(input_dir / f"watermarked_reference_{index:02d}.png")
+            for index, path in enumerate(clean_group):
+                load_rgb(path).save(input_dir / f"clean_reference_{index:02d}.png")
+            tensor_to_pil(target_tensor).save(input_dir / "target_watermarked.png")
+            tensor_to_pil(mean_image_target(target_tensor)).save(
+                input_dir / "jain_constant_mean_guidance.png"
+            )
+            scale_inputs = [
+                *[value for value in watermarked_latents],
+                *[value for value in clean_latents],
+                water_mean,
+                clean_mean,
+                watermark_direction,
+                target_latent,
+                *targets.values(),
+            ]
+            latent_scale = shared_latent_scale(scale_inputs)
+            for index, value in enumerate(watermarked_latents):
+                latent_to_pil(value, latent_scale).save(
+                    latent_dir / f"watermarked_latent_{index:02d}.png"
+                )
+            for index, value in enumerate(clean_latents):
+                latent_to_pil(value, latent_scale).save(
+                    latent_dir / f"clean_latent_{index:02d}.png"
+                )
+            for name, value in {
+                "watermarked_mean": water_mean,
+                "clean_mean": clean_mean,
+                "watermark_direction_difference": watermark_direction,
+            }.items():
+                latent_to_pil(value, latent_scale).save(
+                    aggregate_dir / f"{name}.png"
+                )
+            for method, value in targets.items():
+                latent_to_pil(value, latent_scale).save(
+                    target_dir / f"{method}_target.png"
+                )
+            visualization_manifest = {
+                "w_seed": w_seed,
+                "exact_tensor_artifact": str(
+                    (artifact_dir / "removal_artifacts.pt").relative_to(run_dir)
+                ),
+                "latent_color_mapping": "blue=negative, white=zero, red=positive",
+                "shared_absolute_scale": latent_scale,
+                "scale_quantile": 0.995,
+                "watermarked_reference_count": len(reference_paths),
+                "clean_reference_count": len(clean_group),
+                "target_reference_index": target_index,
+                "removal_target_semantics": {
+                    "jain_mean_image": "attract to encoded constant mean-image",
+                    "latent_repulsion": "repel from this latent target",
+                    "clean_attraction": "attract to this latent target",
+                    "mean_shift": "attract to this latent target",
+                },
+            }
+            (visualization_dir / "visualization_manifest.json").write_text(
+                json.dumps(visualization_manifest, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
         for method in REMOVAL_METHODS:
             entry_key = (w_seed, method); output_path = run_dir / method / f"{sample_id}.png"
             if args.skip_existing and output_path.is_file() and entry_key in existing_entries:
@@ -168,10 +251,18 @@ def main() -> None:
             started = time.perf_counter()
             result = optimize_to_target_latent(cover=target_tensor, target_latent=targets[method], vae=vae, lambda_pixel=lambda_pixel, alpha=alpha, num_iterations=iterations, log_every=int(config["attack"]["log_every"]), progress_callback=progress, detection_every=detection_every, detection_callback=detect, detection_threshold=threshold, stop_on_detection=True, maximize_latent_distance=removal_mode(method) == "repel", detection_success="ge")
             runtime = time.perf_counter() - started
-            tensor_to_pil(result.adversarial).save(output_path)
+            removed_image = tensor_to_pil(result.adversarial)
+            removed_image.save(output_path)
+            visualization_output = None
+            if args.save_visualizations:
+                visualization_output_path = visualization_dir / "removed_images" / f"{method}.png"
+                removed_image.save(visualization_output_path)
+                visualization_output = str(
+                    visualization_output_path.relative_to(run_dir)
+                )
             history_path = run_dir / "logs" / method / f"{sample_id}.csv"; detection_path = run_dir / "detections" / method / f"{sample_id}.csv"
             write_history(history_path, result.history); write_detection_history(detection_path, result.detection_history)
-            entry = {"pair_index": pair_index, "w_seed": w_seed, "sample_id": sample_id, "method": method, "source_path": str(target_path), "source_export": str(source_export.relative_to(run_dir)), "source_target_p_value": source_p, "output": str(output_path.relative_to(run_dir)), "history": str(history_path.relative_to(run_dir)), "detection_history": str(detection_path.relative_to(run_dir)), "reference_metadata": str(metadata_path), "reference_key_sha256": metadata.get("key_sha256"), "clean_prior_paths": [str(path) for path in clean_group], "requested_iterations": iterations, "executed_iterations": result.executed_iterations, "early_stopped": result.executed_iterations < iterations, "first_success_step": result.first_success_step, "first_success_p_value": result.first_success_p_value, "runtime_seconds": runtime, "peak_memory_mb": torch.cuda.max_memory_allocated() / (1024 ** 2) if torch.cuda.is_available() else None}
+            entry = {"pair_index": pair_index, "w_seed": w_seed, "sample_id": sample_id, "method": method, "source_path": str(target_path), "source_export": str(source_export.relative_to(run_dir)), "source_target_p_value": source_p, "output": str(output_path.relative_to(run_dir)), "visualization_output": visualization_output, "history": str(history_path.relative_to(run_dir)), "detection_history": str(detection_path.relative_to(run_dir)), "reference_metadata": str(metadata_path), "reference_key_sha256": metadata.get("key_sha256"), "clean_prior_paths": [str(path) for path in clean_group], "requested_iterations": iterations, "executed_iterations": result.executed_iterations, "early_stopped": result.executed_iterations < iterations, "first_success_step": result.first_success_step, "first_success_p_value": result.first_success_p_value, "runtime_seconds": runtime, "peak_memory_mb": torch.cuda.max_memory_allocated() / (1024 ** 2) if torch.cuda.is_available() else None}
             manifest["entries"] = [entry if (int(old["w_seed"]), old["method"]) == entry_key else old for old in manifest["entries"]] if entry_key in existing_entries else manifest["entries"] + [entry]
             existing_entries[entry_key] = entry; write_manifest(manifest_path, manifest)
         del watermarked_latents, clean_latents, targets, detector_key, detector_mask
