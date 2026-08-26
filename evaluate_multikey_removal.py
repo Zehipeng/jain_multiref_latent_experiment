@@ -11,6 +11,9 @@ from typing import Any
 
 import numpy as np
 import torch
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 from tqdm import tqdm
 
@@ -45,6 +48,123 @@ def _image_array(path: Path) -> np.ndarray:
 
 def _mean(values: list[float]) -> float | None:
     return float(np.mean(values)) if values else None
+
+
+def _checkpoint_metrics(
+    run_dir: Path,
+    manifest: dict[str, Any],
+    lpips_model: torch.nn.Module | None,
+    config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    size = int(config["watermark"]["img_size"])
+    device = config["model"]["device"]
+    for entry in manifest["entries"]:
+        source_path = run_dir / entry["source_export"]
+        source = _image_array(source_path)
+        with (run_dir / entry["detection_history"]).open(
+            newline="", encoding="utf-8"
+        ) as handle:
+            detections = {
+                int(record["step"]): float(record["p_value"])
+                for record in csv.DictReader(handle)
+            }
+        for step in entry["checkpoint_steps"]:
+            checkpoint = run_dir / entry["checkpoint_dir"] / f"step_{int(step):04d}.png"
+            if not checkpoint.is_file():
+                raise FileNotFoundError(f"Missing checkpoint: {checkpoint}")
+            if int(step) not in detections:
+                raise ValueError(
+                    f"Missing p-value for step {step}: {entry['detection_history']}"
+                )
+            output = _image_array(checkpoint)
+            diff = output - source
+            psnr = float("inf") if not np.any(diff) else float(
+                peak_signal_noise_ratio(source, output, data_range=1.0)
+            )
+            lpips_value = None
+            if lpips_model is not None:
+                with torch.inference_mode():
+                    lpips_value = float(
+                        lpips_model(
+                            preprocess_pil(load_rgb(source_path), size).unsqueeze(0).to(device),
+                            preprocess_pil(load_rgb(checkpoint), size).unsqueeze(0).to(device),
+                        ).item()
+                    )
+            rows.append(
+                {
+                    "pair_index": entry["pair_index"],
+                    "w_seed": entry["w_seed"],
+                    "sample_id": entry["sample_id"],
+                    "method": entry["method"],
+                    "step": int(step),
+                    "p_value": detections[int(step)],
+                    "removed": int(detections[int(step)] >= float(config["evaluation"]["p_value_threshold"])),
+                    "l2": float(np.linalg.norm(diff.reshape(-1))),
+                    "linf": float(np.abs(diff).max()),
+                    "psnr": psnr,
+                    "ssim": float(structural_similarity(source, output, data_range=1.0, channel_axis=2)),
+                    "lpips": lpips_value,
+                    "checkpoint": str(checkpoint.relative_to(run_dir)),
+                }
+            )
+    return rows
+
+
+def _summarize_checkpoint_metrics(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, int], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[(row["method"], int(row["step"]))].append(row)
+    summary: list[dict[str, Any]] = []
+    for method in REMOVAL_METHODS:
+        for step in sorted({key[1] for key in grouped if key[0] == method}):
+            records = grouped[(method, step)]
+            item: dict[str, Any] = {"method": method, "step": step, "n": len(records)}
+            for metric in ("p_value", "l2", "linf", "psnr", "ssim", "lpips"):
+                values = [float(row[metric]) for row in records if row[metric] is not None]
+                finite = [value for value in values if np.isfinite(value)]
+                item[f"mean_{metric}"] = float(np.mean(values)) if values else None
+                item[f"std_{metric}"] = float(np.std(finite, ddof=1)) if len(finite) > 1 else (0.0 if finite else None)
+            item["asr"] = float(np.mean([row["removed"] for row in records]))
+            summary.append(item)
+    return summary
+
+
+def _plot_checkpoint_trends(
+    run_dir: Path, summary: list[dict[str, Any]], threshold: float
+) -> None:
+    plot_dir = run_dir / "trend_plots"
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    colors = dict(zip(REMOVAL_METHODS, ("#4472C4", "#ED7D31", "#70AD47", "#A64D79")))
+
+    fig, axis = plt.subplots(figsize=(8, 5))
+    for method in REMOVAL_METHODS:
+        records = [row for row in summary if row["method"] == method]
+        axis.plot([row["step"] for row in records], [row["mean_p_value"] for row in records], marker="o", label=method, color=colors[method])
+    axis.axhline(threshold, color="black", linestyle="--", linewidth=1, label=f"threshold={threshold}")
+    axis.set(xlabel="Iteration", ylabel="Mean target-key p-value", title="Watermark-removal p-value trend")
+    axis.grid(alpha=0.25); axis.legend(); fig.tight_layout()
+    fig.savefig(plot_dir / "p_value_vs_iteration.png", dpi=200); plt.close(fig)
+
+    metrics = (("l2", "Mean L2"), ("linf", "Mean Linf"), ("psnr", "Mean PSNR (dB)"), ("ssim", "Mean SSIM"))
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex=True)
+    for axis, (metric, label) in zip(axes.flat, metrics):
+        for method in REMOVAL_METHODS:
+            records = [row for row in summary if row["method"] == method]
+            values = [row[f"mean_{metric}"] for row in records]
+            axis.plot([row["step"] for row in records], values, marker="o", label=method, color=colors[method])
+        axis.set(xlabel="Iteration", ylabel=label); axis.grid(alpha=0.25)
+    axes[0, 0].legend(); fig.suptitle("Image-quality and perturbation trends"); fig.tight_layout()
+    fig.savefig(plot_dir / "quality_vs_iteration.png", dpi=200); plt.close(fig)
+
+    if any(row["mean_lpips"] is not None for row in summary):
+        fig, axis = plt.subplots(figsize=(8, 5))
+        for method in REMOVAL_METHODS:
+            records = [row for row in summary if row["method"] == method]
+            axis.plot([row["step"] for row in records], [row["mean_lpips"] for row in records], marker="o", label=method, color=colors[method])
+        axis.set(xlabel="Iteration", ylabel="Mean LPIPS", title="Perceptual-quality trend")
+        axis.grid(alpha=0.25); axis.legend(); fig.tight_layout()
+        fig.savefig(plot_dir / "lpips_vs_iteration.png", dpi=200); plt.close(fig)
 
 
 def main() -> None:
@@ -102,6 +222,11 @@ def main() -> None:
         method_rows = grouped[method]; successful = [row for row in method_rows if row["success"]]
         summary[method] = {"n": len(method_rows), "asr": sum(row["success"] for row in method_rows) / len(method_rows), "mean_l2": _mean([row["l2"] for row in method_rows]), "mean_linf": _mean([row["linf"] for row in method_rows]), "mean_psnr": _mean([row["psnr"] for row in method_rows]), "mean_ssim": _mean([row["ssim"] for row in method_rows]), "mean_lpips": _mean([row["lpips"] for row in method_rows if row["lpips"] is not None]), "mean_wrong_key_accept_rate": _mean([row["wrong_key_accept_rate"] for row in method_rows if row["wrong_key_accept_rate"] is not None]), "mean_first_success_step": _mean([float(row["first_success_step"]) for row in successful if row["first_success_step"] is not None]), "mean_runtime_seconds": _mean([float(row["runtime_seconds"]) for row in method_rows if row["runtime_seconds"] is not None])}
     summary_path = run_dir / "removal_summary.json"; summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+    checkpoint_rows = _checkpoint_metrics(run_dir, manifest, lpips_model, config)
+    _write_csv(run_dir / "removal_checkpoint_metrics.csv", checkpoint_rows)
+    checkpoint_summary = _summarize_checkpoint_metrics(checkpoint_rows)
+    _write_csv(run_dir / "removal_checkpoint_summary.csv", checkpoint_summary)
+    _plot_checkpoint_trends(run_dir, checkpoint_summary, threshold)
     print(json.dumps(summary, ensure_ascii=False, indent=2)); print(f"metrics written to {run_dir}")
 
 

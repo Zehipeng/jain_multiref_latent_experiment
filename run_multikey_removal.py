@@ -82,6 +82,7 @@ def main() -> None:
     keys = all_keys[:pair_count]
     iterations = args.iterations or int(config["attack"]["num_iterations"])
     detection_every = int(config["attack"]["detection_every"])
+    early_stop = bool(config["attack"].get("early_stop_on_success", False))
     threshold = float(config["evaluation"]["p_value_threshold"])
     lambda_pixel = float(config["attack"]["lambda_pixel"])
     alpha = float(config["attack"]["alpha"])
@@ -112,8 +113,8 @@ def main() -> None:
         raise FileExistsError(f"Run exists: {run_dir}; use a new name or --skip-existing")
     existing = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else None
     if existing is not None:
-        expected = {"methods": list(REMOVAL_METHODS), "pair_count": pair_count, "iterations": iterations, "detection_every": detection_every, "beta": beta, "lambda_pixel": lambda_pixel, "save_visualizations": args.save_visualizations}
-        recorded = {"methods": existing.get("methods"), "pair_count": existing.get("pair_count"), "iterations": existing.get("attack", {}).get("iterations"), "detection_every": existing.get("attack", {}).get("detection_every"), "beta": existing.get("removal", {}).get("beta"), "lambda_pixel": existing.get("attack", {}).get("lambda_pixel"), "save_visualizations": existing.get("visualizations", {}).get("enabled", False)}
+        expected = {"methods": list(REMOVAL_METHODS), "pair_count": pair_count, "iterations": iterations, "detection_every": detection_every, "early_stop_on_success": early_stop, "beta": beta, "lambda_pixel": lambda_pixel, "save_visualizations": args.save_visualizations}
+        recorded = {"methods": existing.get("methods"), "pair_count": existing.get("pair_count"), "iterations": existing.get("attack", {}).get("iterations"), "detection_every": existing.get("attack", {}).get("detection_every"), "early_stop_on_success": existing.get("attack", {}).get("early_stop_on_success"), "beta": existing.get("removal", {}).get("beta"), "lambda_pixel": existing.get("attack", {}).get("lambda_pixel"), "save_visualizations": existing.get("visualizations", {}).get("enabled", False)}
         if expected != recorded or existing.get("config", {}).get("sha256") != config_sha256:
             raise ValueError("Cannot resume with different removal-design settings")
 
@@ -134,7 +135,7 @@ def main() -> None:
         "config": {"snapshot": "config_snapshot.yaml", "sha256": config_sha256},
         "models": {"target": {"id": config["model"]["target_model_id"], "revision": config["model"].get("target_model_revision"), "variant": config["model"].get("target_model_variant")}, "proxy_vae": {"id": config["model"]["proxy_vae_model_id"], "revision": config["model"].get("proxy_vae_revision")}, "dtype": config["model"]["dtype"], "device": config["model"]["device"], "local_files_only": bool(config["model"].get("local_files_only", True)), "cache_dir": config["model"].get("cache_dir")},
         "removal": {"beta": beta, "target_reference_index": target_index, "target_in_reference_aggregate": bool(config["removal"].get("target_in_reference_aggregate", True)), "clean_images_per_key": clean_per_key, "methods": {"jain_mean_image": "attract proxy-VAE latent of the target image's constant mean-image", "latent_repulsion": "repel the five-reference watermarked latent mean", "clean_attraction": "attract the five-image clean-prior latent mean", "mean_shift": "attract z_target - beta*(zbar_watermarked-zbar_clean)"}},
-        "attack": {"lambda_pixel": lambda_pixel, "alpha": alpha, "iterations": iterations, "log_every": int(config["attack"]["log_every"]), "detection_every": detection_every, "detection_threshold": threshold, "early_stop_on_success": True, "success_rule": "target-key p_value >= threshold"},
+        "attack": {"lambda_pixel": lambda_pixel, "alpha": alpha, "iterations": iterations, "log_every": int(config["attack"]["log_every"]), "detection_every": detection_every, "detection_threshold": threshold, "early_stop_on_success": early_stop, "records_step_zero": True, "checkpoint_every": detection_every, "success_rule": "target-key p_value >= threshold"},
         "visualizations": {"enabled": args.save_visualizations, "format": "four-channel blue-white-red PNG grid with one shared per-key 99.5th-percentile absolute scale; exact tensors are stored in removal_artifacts.pt"},
         "reference_banks": {"snapshot": "reference_multikey_manifest_snapshot.json", "sha256": sha256_file(reference_manifest_path)},
         "clean_prior_manifest": {"path": clean_manifest_path.name, "sha256": sha256_file(clean_manifest_path)},
@@ -252,10 +253,16 @@ def main() -> None:
                 p_value = detect_p_value(tensor_to_pil(tensor), detector_pipe, detector_key, detector_mask, image_size, inversion_steps)
                 print(f"detect key={w_seed} method={_method} step={step}/{iterations} p_value={p_value:.8g} removed={p_value >= threshold}", flush=True)
                 return p_value
+            checkpoint_dir = run_dir / "checkpoints" / method / sample_id
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            tensor_to_pil(target_tensor).save(checkpoint_dir / "step_0000.png")
+            def save_checkpoint(step: int, tensor: torch.Tensor) -> None:
+                tensor_to_pil(tensor).save(checkpoint_dir / f"step_{step:04d}.png")
             if torch.cuda.is_available(): torch.cuda.reset_peak_memory_stats()
             started = time.perf_counter()
-            result = optimize_to_target_latent(cover=target_tensor, target_latent=targets[method], vae=vae, lambda_pixel=lambda_pixel, alpha=alpha, num_iterations=iterations, log_every=int(config["attack"]["log_every"]), progress_callback=progress, detection_every=detection_every, detection_callback=detect, detection_threshold=threshold, stop_on_detection=True, maximize_latent_distance=removal_mode(method) == "repel", detection_success="ge")
+            result = optimize_to_target_latent(cover=target_tensor, target_latent=targets[method], vae=vae, lambda_pixel=lambda_pixel, alpha=alpha, num_iterations=iterations, log_every=int(config["attack"]["log_every"]), progress_callback=progress, snapshot_steps=set(range(detection_every, iterations + 1, detection_every)), snapshot_callback=save_checkpoint, detection_every=detection_every, detection_callback=detect, detection_threshold=threshold, stop_on_detection=early_stop, maximize_latent_distance=removal_mode(method) == "repel", detection_success="ge")
             runtime = time.perf_counter() - started
+            result.detection_history.insert(0, {"step": 0, "p_value": source_p, "success": source_p >= threshold})
             removed_image = tensor_to_pil(result.adversarial)
             removed_image.save(output_path)
             visualization_output = None
@@ -267,7 +274,7 @@ def main() -> None:
                 )
             history_path = run_dir / "logs" / method / f"{sample_id}.csv"; detection_path = run_dir / "detections" / method / f"{sample_id}.csv"
             write_history(history_path, result.history); write_detection_history(detection_path, result.detection_history)
-            entry = {"pair_index": pair_index, "w_seed": w_seed, "sample_id": sample_id, "method": method, "source_path": str(target_path), "source_export": str(source_export.relative_to(run_dir)), "source_target_p_value": source_p, "output": str(output_path.relative_to(run_dir)), "visualization_output": visualization_output, "history": str(history_path.relative_to(run_dir)), "detection_history": str(detection_path.relative_to(run_dir)), "reference_metadata": str(metadata_path), "reference_key_sha256": metadata.get("key_sha256"), "clean_prior_paths": [str(path) for path in clean_group], "requested_iterations": iterations, "executed_iterations": result.executed_iterations, "early_stopped": result.executed_iterations < iterations, "first_success_step": result.first_success_step, "first_success_p_value": result.first_success_p_value, "runtime_seconds": runtime, "peak_memory_mb": torch.cuda.max_memory_allocated() / (1024 ** 2) if torch.cuda.is_available() else None}
+            entry = {"pair_index": pair_index, "w_seed": w_seed, "sample_id": sample_id, "method": method, "source_path": str(target_path), "source_export": str(source_export.relative_to(run_dir)), "source_target_p_value": source_p, "output": str(output_path.relative_to(run_dir)), "checkpoint_dir": str(checkpoint_dir.relative_to(run_dir)), "checkpoint_steps": [0, *range(detection_every, iterations + 1, detection_every)], "visualization_output": visualization_output, "history": str(history_path.relative_to(run_dir)), "detection_history": str(detection_path.relative_to(run_dir)), "reference_metadata": str(metadata_path), "reference_key_sha256": metadata.get("key_sha256"), "clean_prior_paths": [str(path) for path in clean_group], "requested_iterations": iterations, "executed_iterations": result.executed_iterations, "early_stopped": result.executed_iterations < iterations, "first_success_step": result.first_success_step, "first_success_p_value": result.first_success_p_value, "runtime_seconds": runtime, "peak_memory_mb": torch.cuda.max_memory_allocated() / (1024 ** 2) if torch.cuda.is_available() else None}
             manifest["entries"] = [entry if (int(old["w_seed"]), old["method"]) == entry_key else old for old in manifest["entries"]] if entry_key in existing_entries else manifest["entries"] + [entry]
             existing_entries[entry_key] = entry; write_manifest(manifest_path, manifest)
         del watermarked_latents, clean_latents, targets, detector_key, detector_mask
