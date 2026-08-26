@@ -12,6 +12,7 @@ model:
   device: cuda
   disable_safety_checker: true
   local_files_only: true
+  cache_dir: /root/autodl-tmp/cache/huggingface/hub
 
 multikey:
   key_seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]

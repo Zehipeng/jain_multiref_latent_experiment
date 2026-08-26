@@ -51,19 +51,36 @@ git remote -v
 
 GitHub 代码拉取和首次准备依赖／模型属于**联网准备阶段**。完成准备后，单元测试、攻击实验、评价、结果检查和打包必须能够在 AutoDL 断网状态下完成，运行过程中不得临时下载任何模型、权重、数据或代码。
 
+本项目 AutoDL 已有 Hugging Face 模型缓存的固定位置为：
+
+```text
+/root/autodl-tmp/cache/huggingface/hub
+```
+
+配置文件和运行指令必须优先使用该目录，不能依赖默认的 `/root/.cache/huggingface/hub`。对应环境变量固定为：
+
+```bash
+export HF_HOME=/root/autodl-tmp/cache/huggingface
+export HF_HUB_CACHE=/root/autodl-tmp/cache/huggingface/hub
+export HUGGINGFACE_HUB_CACHE=/root/autodl-tmp/cache/huggingface/hub
+```
+
 Codex 每次生成实验指令时必须：
 
 1. 在实验前检查目标模型、代理 VAE、检测器、LPIPS等评价权重、数据集、参考图像、manifest和 Python 依赖是否已经位于本地缓存或明确的本地路径。
 2. 对 Hugging Face、Transformers、Diffusers 和 Datasets 显式启用离线模式：
 
    ```bash
+   export HF_HOME=/root/autodl-tmp/cache/huggingface
+   export HF_HUB_CACHE=/root/autodl-tmp/cache/huggingface/hub
+   export HUGGINGFACE_HUB_CACHE=/root/autodl-tmp/cache/huggingface/hub
    export HF_HUB_OFFLINE=1
    export TRANSFORMERS_OFFLINE=1
    export DIFFUSERS_OFFLINE=1
    export HF_DATASETS_OFFLINE=1
    ```
 
-3. 代码中的模型加载应使用已固定 revision 的本地缓存并启用 `local_files_only=True`，或直接使用配置中记录的本地绝对路径；不得在实验循环中访问网络。
+3. 代码中的模型加载应显式传入 `cache_dir=/root/autodl-tmp/cache/huggingface/hub`，使用已固定 revision 的本地缓存并启用 `local_files_only=True`，或直接使用配置中记录的本地绝对路径；不得在实验循环中访问网络。
 4. 对可能自行下载权重的评价库（例如 LPIPS／torchvision）提前完成缓存，并在离线预检查中实际加载一次。缺少缓存时必须在实验开始前明确失败，不能运行到评价阶段才联网下载。
 5. 不在实验命令中执行 `pip install`、`git pull`、`wget`、`curl` 或其他联网操作。依赖安装和资产下载必须在联网准备阶段独立完成并记录版本。
 6. 将上述离线环境变量、本地模型／缓存路径及离线预检查结果写入实验元数据和日志。
@@ -318,7 +335,7 @@ git status --short > "$metadata_dir/git_status.txt"
 python --version > "$metadata_dir/environment.txt" 2>&1
 python -m pip freeze >> "$metadata_dir/environment.txt"
 nvidia-smi >> "$metadata_dir/environment.txt" 2>&1
-env | grep -E '^(HF_HUB_OFFLINE|TRANSFORMERS_OFFLINE|DIFFUSERS_OFFLINE|HF_DATASETS_OFFLINE)=' \
+env | grep -E '^(HF_HOME|HF_HUB_CACHE|HUGGINGFACE_HUB_CACHE|HF_HUB_OFFLINE|TRANSFORMERS_OFFLINE|DIFFUSERS_OFFLINE|HF_DATASETS_OFFLINE)=' \
   > "$metadata_dir/offline_environment.txt"
 ```
 
@@ -483,6 +500,7 @@ git config --show-origin --get-regexp 'http\..*|https\..*|.*proxy.*' || true
 - 每次实验（包括 smoke）都必须生成独立 `run_id`，记录复现元数据，并打包为同名 `.tar.gz`、`.sha256` 和内容清单供用户下载。
 - 用户下载结果后，Codex 必须先校验和核对完整性，再分析数据并给出有证据边界的实验结论。
 - 除代码拉取和首次资产准备外，所有测试、攻击、评价、检查与打包都必须能够断网运行；每次实验指令必须显式设置离线环境变量并先验证本地资产完整。
+- AutoDL Hugging Face 缓存固定使用 `/root/autodl-tmp/cache/huggingface/hub`；代码配置、环境变量和复现元数据必须记录该路径，不能回退到 `/root/.cache/huggingface/hub` 后误判模型缺失。
 - 实验代码加载模型时必须使用本地缓存加固定 revision及 `local_files_only=True`，或使用已记录的本地绝对路径；运行时出现下载或网络重试即判定离线协议失败。
 - 每次推送后都给出 AutoDL 可复制命令，并要求核对完整 commit SHA。
 - 认证或远端异常、需要覆盖历史、发现未说明的本地改动时停止并报告，不自行采取破坏性操作。

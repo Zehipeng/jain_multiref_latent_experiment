@@ -39,3 +39,6 @@ def test_removal_config_requires_local_model_cache() -> None:
     config = load_config("configs/tree_ring_multikey_removal_10x15000.yaml")
 
     assert config["model"]["local_files_only"] is True
+    assert config["model"]["cache_dir"] == (
+        "/root/autodl-tmp/cache/huggingface/hub"
+    )

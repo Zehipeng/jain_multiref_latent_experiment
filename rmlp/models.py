@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -38,6 +39,8 @@ def load_target_pipeline(config: dict[str, Any]) -> StableDiffusionPipeline:
         "torch_dtype": dtype,
         "local_files_only": bool(model_cfg.get("local_files_only", True)),
     }
+    if model_cfg.get("cache_dir"):
+        kwargs["cache_dir"] = str(Path(model_cfg["cache_dir"]).expanduser())
     if model_cfg.get("target_model_revision"):
         kwargs["revision"] = model_cfg["target_model_revision"]
     if model_cfg.get("target_model_variant"):
@@ -61,6 +64,8 @@ def load_proxy_vae(config: dict[str, Any]) -> AutoencoderKL:
         "torch_dtype": dtype,
         "local_files_only": bool(model_cfg.get("local_files_only", True)),
     }
+    if model_cfg.get("cache_dir"):
+        kwargs["cache_dir"] = str(Path(model_cfg["cache_dir"]).expanduser())
     if model_cfg.get("proxy_vae_revision"):
         kwargs["revision"] = model_cfg["proxy_vae_revision"]
     if model_cfg.get("proxy_vae_variant"):

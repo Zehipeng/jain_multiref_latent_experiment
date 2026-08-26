@@ -132,7 +132,7 @@ def main() -> None:
         "design": "paired four-method removal; reference index 0 is the attacked target and remains in the five-image aggregate",
         "pair_count": pair_count, "total_attacks": pair_count * len(REMOVAL_METHODS), "methods": list(REMOVAL_METHODS),
         "config": {"snapshot": "config_snapshot.yaml", "sha256": config_sha256},
-        "models": {"target": {"id": config["model"]["target_model_id"], "revision": config["model"].get("target_model_revision"), "variant": config["model"].get("target_model_variant")}, "proxy_vae": {"id": config["model"]["proxy_vae_model_id"], "revision": config["model"].get("proxy_vae_revision")}, "dtype": config["model"]["dtype"], "device": config["model"]["device"]},
+        "models": {"target": {"id": config["model"]["target_model_id"], "revision": config["model"].get("target_model_revision"), "variant": config["model"].get("target_model_variant")}, "proxy_vae": {"id": config["model"]["proxy_vae_model_id"], "revision": config["model"].get("proxy_vae_revision")}, "dtype": config["model"]["dtype"], "device": config["model"]["device"], "local_files_only": bool(config["model"].get("local_files_only", True)), "cache_dir": config["model"].get("cache_dir")},
         "removal": {"beta": beta, "target_reference_index": target_index, "target_in_reference_aggregate": bool(config["removal"].get("target_in_reference_aggregate", True)), "clean_images_per_key": clean_per_key, "methods": {"jain_mean_image": "attract proxy-VAE latent of the target image's constant mean-image", "latent_repulsion": "repel the five-reference watermarked latent mean", "clean_attraction": "attract the five-image clean-prior latent mean", "mean_shift": "attract z_target - beta*(zbar_watermarked-zbar_clean)"}},
         "attack": {"lambda_pixel": lambda_pixel, "alpha": alpha, "iterations": iterations, "log_every": int(config["attack"]["log_every"]), "detection_every": detection_every, "detection_threshold": threshold, "early_stop_on_success": True, "success_rule": "target-key p_value >= threshold"},
         "visualizations": {"enabled": args.save_visualizations, "format": "four-channel blue-white-red PNG grid with one shared per-key 99.5th-percentile absolute scale; exact tensors are stored in removal_artifacts.pt"},
@@ -145,7 +145,8 @@ def main() -> None:
 
     print(
         "loading cached SD1.4 proxy VAE and cached SD2-base target detector "
-        f"(local_files_only={bool(config['model'].get('local_files_only', True))})",
+        f"(local_files_only={bool(config['model'].get('local_files_only', True))}, "
+        f"cache_dir={config['model'].get('cache_dir')})",
         flush=True,
     )
     vae, detector_pipe = load_proxy_vae(config), load_target_pipeline(config)
