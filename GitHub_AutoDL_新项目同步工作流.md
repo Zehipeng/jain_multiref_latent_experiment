@@ -47,6 +47,29 @@ git remote -v
 
 指令中的分支、完整 SHA、`run_id`、配置文件、输出目录和日志文件必须针对当次实验填写，不得沿用无关示例占位符。若某一步必须等待前一步成功，Codex 应明确要求用户暂停并回传结果，或使用安全的条件连接避免失败后继续执行。
 
+### 2.2 实验必须支持完全离线运行
+
+GitHub 代码拉取和首次准备依赖／模型属于**联网准备阶段**。完成准备后，单元测试、攻击实验、评价、结果检查和打包必须能够在 AutoDL 断网状态下完成，运行过程中不得临时下载任何模型、权重、数据或代码。
+
+Codex 每次生成实验指令时必须：
+
+1. 在实验前检查目标模型、代理 VAE、检测器、LPIPS等评价权重、数据集、参考图像、manifest和 Python 依赖是否已经位于本地缓存或明确的本地路径。
+2. 对 Hugging Face、Transformers、Diffusers 和 Datasets 显式启用离线模式：
+
+   ```bash
+   export HF_HUB_OFFLINE=1
+   export TRANSFORMERS_OFFLINE=1
+   export DIFFUSERS_OFFLINE=1
+   export HF_DATASETS_OFFLINE=1
+   ```
+
+3. 代码中的模型加载应使用已固定 revision 的本地缓存并启用 `local_files_only=True`，或直接使用配置中记录的本地绝对路径；不得在实验循环中访问网络。
+4. 对可能自行下载权重的评价库（例如 LPIPS／torchvision）提前完成缓存，并在离线预检查中实际加载一次。缺少缓存时必须在实验开始前明确失败，不能运行到评价阶段才联网下载。
+5. 不在实验命令中执行 `pip install`、`git pull`、`wget`、`curl` 或其他联网操作。依赖安装和资产下载必须在联网准备阶段独立完成并记录版本。
+6. 将上述离线环境变量、本地模型／缓存路径及离线预检查结果写入实验元数据和日志。
+
+每次回复中的六组实验指令里，代码拉取是唯一允许依赖网络的步骤。其后的单元测试、实验运行、结果检查、评价和打包指令必须继承离线环境。若本地资产不完整，应提供“联网准备资产 → 关闭／断开网络 → 离线预检查 → 正式运行”的分阶段指令，不得把可联网运行误写为已满足离线复现。
+
 ## 3. 本地电脑：首次连接 GitHub（只做一次）
 
 ### 情况 A：本地目录还不是 Git 仓库
@@ -235,6 +258,8 @@ git -c http.version=HTTP/1.1 fetch --no-tags origin <分支名> \
 → 创建独立 commit
 → 推送 GitHub
 → AutoDL 拉取并核对同一 commit
+→ 联网阶段准备并核对所有本地模型、权重、依赖和数据
+→ 启用离线环境并执行离线资产预检查
 → 运行单元测试
 → 运行实验
 → 检查输出完整性
@@ -247,6 +272,8 @@ git -c http.version=HTTP/1.1 fetch --no-tags origin <分支名> \
 ```
 
 任何 smoke、小规模核心实验、消融实验或正式实验都必须走完上述闭环。不得因为实验规模较小而省略结果检查、评价或打包指令。若实验失败，也应保存和打包当次日志、配置、manifest／部分输出及退出码，用于本地诊断，但必须标记为失败或不完整实验，不能当作正式结果。
+
+实验开始后默认视为断网运行。日志中若出现模型或权重下载请求、Hub访问重试、DNS／HTTP请求或因缺少远端资产而产生的联网行为，则该次离线协议验收失败；应补齐本地资产后重新运行，不能把该次结果记为符合离线协议的正式实验。
 
 正式实验优先在 `tmux` 中运行。实验至少记录：
 
@@ -291,6 +318,8 @@ git status --short > "$metadata_dir/git_status.txt"
 python --version > "$metadata_dir/environment.txt" 2>&1
 python -m pip freeze >> "$metadata_dir/environment.txt"
 nvidia-smi >> "$metadata_dir/environment.txt" 2>&1
+env | grep -E '^(HF_HUB_OFFLINE|TRANSFORMERS_OFFLINE|DIFFUSERS_OFFLINE|HF_DATASETS_OFFLINE)=' \
+  > "$metadata_dir/offline_environment.txt"
 ```
 
 还应把正式实验的原始命令、配置文件、模型标识、数据或 manifest 版本、随机种子、开始与结束时间、退出码写入日志或元数据文件。若这些信息尚未记录，先补齐，不要仅凭文件名猜测。
@@ -453,5 +482,7 @@ git config --show-origin --get-regexp 'http\..*|https\..*|.*proxy.*' || true
 - 每次修改实验代码后的回复必须完整提供：代码拉取、单元测试、实验运行、结果检查、实验评价和结果打包六组指令。
 - 每次实验（包括 smoke）都必须生成独立 `run_id`，记录复现元数据，并打包为同名 `.tar.gz`、`.sha256` 和内容清单供用户下载。
 - 用户下载结果后，Codex 必须先校验和核对完整性，再分析数据并给出有证据边界的实验结论。
+- 除代码拉取和首次资产准备外，所有测试、攻击、评价、检查与打包都必须能够断网运行；每次实验指令必须显式设置离线环境变量并先验证本地资产完整。
+- 实验代码加载模型时必须使用本地缓存加固定 revision及 `local_files_only=True`，或使用已记录的本地绝对路径；运行时出现下载或网络重试即判定离线协议失败。
 - 每次推送后都给出 AutoDL 可复制命令，并要求核对完整 commit SHA。
 - 认证或远端异常、需要覆盖历史、发现未说明的本地改动时停止并报告，不自行采取破坏性操作。
