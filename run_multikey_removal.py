@@ -143,7 +143,11 @@ def main() -> None:
     manifest.setdefault("commands", []).append(list(sys.argv))
     existing_entries = {(int(entry["w_seed"]), entry["method"]): entry for entry in manifest["entries"]}
 
-    print("loading shared SD1.4 proxy VAE and SD2-base online detector", flush=True)
+    print(
+        "loading cached SD1.4 proxy VAE and cached SD2-base target detector "
+        f"(local_files_only={bool(config['model'].get('local_files_only', True))})",
+        flush=True,
+    )
     vae, detector_pipe = load_proxy_vae(config), load_target_pipeline(config)
     inversion_steps = int(config["evaluation"]["inversion_steps"])
     for pair_index, (w_seed, clean_group) in enumerate(tqdm(zip(keys, clean_groups), total=pair_count, desc="removal keys")):

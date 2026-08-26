@@ -34,7 +34,10 @@ def seed_everything(seed: int) -> None:
 def load_target_pipeline(config: dict[str, Any]) -> StableDiffusionPipeline:
     model_cfg = config["model"]
     dtype = resolve_dtype(model_cfg["dtype"])
-    kwargs: dict[str, Any] = {"torch_dtype": dtype}
+    kwargs: dict[str, Any] = {
+        "torch_dtype": dtype,
+        "local_files_only": bool(model_cfg.get("local_files_only", True)),
+    }
     if model_cfg.get("target_model_revision"):
         kwargs["revision"] = model_cfg["target_model_revision"]
     if model_cfg.get("target_model_variant"):
@@ -53,7 +56,11 @@ def load_target_pipeline(config: dict[str, Any]) -> StableDiffusionPipeline:
 def load_proxy_vae(config: dict[str, Any]) -> AutoencoderKL:
     model_cfg = config["model"]
     dtype = resolve_dtype(model_cfg["dtype"])
-    kwargs: dict[str, Any] = {"subfolder": "vae", "torch_dtype": dtype}
+    kwargs: dict[str, Any] = {
+        "subfolder": "vae",
+        "torch_dtype": dtype,
+        "local_files_only": bool(model_cfg.get("local_files_only", True)),
+    }
     if model_cfg.get("proxy_vae_revision"):
         kwargs["revision"] = model_cfg["proxy_vae_revision"]
     if model_cfg.get("proxy_vae_variant"):

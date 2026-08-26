@@ -1,5 +1,6 @@
 import torch
 
+from rmlp.config import load_config
 from rmlp.image_io import latent_to_pil, shared_latent_scale
 from rmlp.removal import mean_image_target, mean_shift_target, removal_mode
 
@@ -32,3 +33,9 @@ def test_latent_visualization_uses_shared_scale_and_four_channel_grid() -> None:
     assert scale == 2.0
     assert image.mode == "RGB"
     assert image.size == (64, 108)
+
+
+def test_removal_config_requires_local_model_cache() -> None:
+    config = load_config("configs/tree_ring_multikey_removal_10x15000.yaml")
+
+    assert config["model"]["local_files_only"] is True
