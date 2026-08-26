@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
 import torch
 import torch.nn.functional as F
@@ -33,8 +33,15 @@ def optimize_to_target_latent(
     detection_callback: Callable[[int, torch.Tensor], float] | None = None,
     detection_threshold: float = 0.05,
     stop_on_detection: bool = False,
+    maximize_latent_distance: bool = False,
+    detection_success: Literal["le", "ge"] = "le",
 ) -> AttackResult:
-    """Jain latent MSE + pixel MSE optimization with a precomputed target."""
+    """Optimize a latent-MSE objective with an image-space fidelity penalty.
+
+    The default reproduces the Jain-style attraction objective.  Setting
+    ``maximize_latent_distance`` implements the repulsion ablation while
+    retaining the same pixel-fidelity term and gradient-descent update.
+    """
     if cover.ndim == 3:
         cover = cover.unsqueeze(0)
     device = next(vae.parameters()).device
@@ -49,6 +56,8 @@ def optimize_to_target_latent(
         raise ValueError("detection_every must be positive when enabled")
     if detection_every is not None and detection_callback is None:
         raise ValueError("detection_callback is required when periodic detection is enabled")
+    if detection_success not in {"le", "ge"}:
+        raise ValueError("detection_success must be either 'le' or 'ge'")
     first_success_step: int | None = None
     first_success_p_value: float | None = None
     executed_iterations = 0
@@ -63,7 +72,8 @@ def optimize_to_target_latent(
         )
         latent_loss = F.mse_loss(encoded, target)
         pixel_loss = F.mse_loss(current, clean)
-        total_loss = latent_loss + lambda_pixel * pixel_loss
+        latent_sign = -1.0 if maximize_latent_distance else 1.0
+        total_loss = latent_sign * latent_loss + lambda_pixel * pixel_loss
         gradient = torch.autograd.grad(total_loss, current, only_inputs=True)[0]
         current = (current - alpha * gradient).clamp(-1.0, 1.0).detach()
         executed_iterations = step
@@ -83,7 +93,11 @@ def optimize_to_target_latent(
 
         if detection_every is not None and step % detection_every == 0:
             p_value = float(detection_callback(step, current))
-            success = p_value <= detection_threshold
+            success = (
+                p_value <= detection_threshold
+                if detection_success == "le"
+                else p_value >= detection_threshold
+            )
             detection_history.append(
                 {"step": step, "p_value": p_value, "success": success}
             )
