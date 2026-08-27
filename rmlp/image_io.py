@@ -106,6 +106,114 @@ def latent_to_pil(
     return canvas
 
 
+def fit_shared_latent_pca(
+    latents: list[torch.Tensor],
+    lower_quantile: float = 0.005,
+    upper_quantile: float = 0.995,
+) -> dict[str, torch.Tensor | float | int]:
+    """Fit one deterministic 4-D-to-RGB PCA projection for several latents.
+
+    The returned projection must be reused for every latent in a comparison.
+    This creates a descriptive single-panel RGB rendering; it is not an exact
+    or invertible representation of the original four-channel tensor.
+    """
+    if not latents:
+        raise ValueError("At least one latent tensor is required")
+    if not 0.0 <= lower_quantile < upper_quantile <= 1.0:
+        raise ValueError("PCA visualization quantiles must satisfy 0 <= low < high <= 1")
+
+    matrices: list[torch.Tensor] = []
+    channels: int | None = None
+    for latent in latents:
+        working = latent.detach().float().cpu()
+        if working.ndim == 4:
+            if working.shape[0] != 1:
+                raise ValueError("Only batch size 1 is supported")
+            working = working[0]
+        if working.ndim != 3:
+            raise ValueError("latent must have shape [C,H,W] or [1,C,H,W]")
+        if not torch.isfinite(working).all():
+            raise ValueError("Latent PCA input contains non-finite values")
+        if channels is None:
+            channels = int(working.shape[0])
+        elif int(working.shape[0]) != channels:
+            raise ValueError("All PCA visualization latents must have equal channels")
+        matrices.append(working.permute(1, 2, 0).reshape(-1, working.shape[0]))
+
+    if channels is None or channels < 3:
+        raise ValueError("Latent PCA visualization requires at least three channels")
+    samples = torch.cat(matrices, dim=0)
+    channel_mean = samples.mean(dim=0)
+    centered = samples - channel_mean
+    _, singular_values, vh = torch.linalg.svd(centered, full_matrices=False)
+    components = vh[:3].T.contiguous()
+
+    # SVD component signs are mathematically arbitrary. Fix each sign using
+    # its largest-magnitude loading so repeated runs render identical colors.
+    for index in range(components.shape[1]):
+        component = components[:, index]
+        anchor = int(component.abs().argmax().item())
+        if component[anchor] < 0:
+            components[:, index] = -component
+
+    projected = centered @ components
+    lower = torch.quantile(projected, lower_quantile, dim=0)
+    upper = torch.quantile(projected, upper_quantile, dim=0)
+    upper = torch.maximum(upper, lower + 1e-12)
+    energy = singular_values.square()
+    explained = energy[:3] / energy.sum().clamp_min(1e-12)
+    return {
+        "input_channels": channels,
+        "output_channels": 3,
+        "channel_mean": channel_mean,
+        "components": components,
+        "lower": lower,
+        "upper": upper,
+        "lower_quantile": float(lower_quantile),
+        "upper_quantile": float(upper_quantile),
+        "explained_variance_ratio": explained,
+    }
+
+
+def latent_pca_to_pil(
+    latent: torch.Tensor,
+    projection: dict[str, torch.Tensor | float | int],
+    output_size: int = 512,
+) -> Image.Image:
+    """Render one latent as one RGB panel using a shared fitted PCA mapping."""
+    working = latent.detach().float().cpu()
+    if working.ndim == 4:
+        if working.shape[0] != 1:
+            raise ValueError("Only batch size 1 is supported")
+        working = working[0]
+    if working.ndim != 3:
+        raise ValueError("latent must have shape [C,H,W] or [1,C,H,W]")
+    if not torch.isfinite(working).all():
+        raise ValueError("latent contains non-finite values")
+    if output_size <= 0:
+        raise ValueError("output_size must be positive")
+
+    channel_mean = torch.as_tensor(projection["channel_mean"]).float()
+    components = torch.as_tensor(projection["components"]).float()
+    lower = torch.as_tensor(projection["lower"]).float()
+    upper = torch.as_tensor(projection["upper"]).float()
+    if working.shape[0] != channel_mean.numel() or components.shape != (
+        channel_mean.numel(),
+        3,
+    ):
+        raise ValueError("latent channels do not match the fitted PCA projection")
+
+    pixels = working.permute(1, 2, 0).reshape(-1, working.shape[0])
+    rgb = (pixels - channel_mean) @ components
+    rgb = ((rgb - lower) / (upper - lower).clamp_min(1e-12)).clamp(0.0, 1.0)
+    array = rgb.reshape(working.shape[1], working.shape[2], 3).numpy()
+    array = np.clip(np.rint(array * 255.0), 0, 255).astype(np.uint8)
+    image = Image.fromarray(array, mode="RGB")
+    if image.size != (output_size, output_size):
+        image = image.resize((output_size, output_size), Image.Resampling.NEAREST)
+    return image
+
+
 def safe_stem(path: str | Path) -> str:
     stem = Path(path).stem
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._")

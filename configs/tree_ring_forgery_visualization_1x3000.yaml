@@ -1,0 +1,66 @@
+experiment:
+  name: tree_ring_forgery_visualization_1x3000
+  seed: 1234
+
+model:
+  target_model_id: sd2-community/stable-diffusion-2-base
+  target_model_revision: f5bc1bd97485577aa0b946fa8a9004e2ec147402
+  target_model_variant: fp16
+  proxy_vae_model_id: CompVis/stable-diffusion-v1-4
+  proxy_vae_revision: 133a221b8aa7292a167afc5127cb63fb5005638b
+  dtype: float16
+  device: cuda
+  disable_safety_checker: true
+  cache_dir: /root/autodl-tmp/cache/huggingface/hub
+  local_files_only: true
+
+watermark:
+  w_seed: 0
+  w_channel: 0
+  w_radius: 16
+  img_size: 512
+  generation_seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63]
+  generation_steps: 50
+
+reference_selection:
+  require_detected: true
+  max_candidates: 64
+
+prototype:
+  reference_count: 5
+  retain_count: 5
+  center: none
+  aggregation: simple_average_all_references
+
+attack:
+  lambda_pixel: 10000.0
+  alpha: 0.0196078431372549  # 5 / 255
+  num_iterations: 3000
+  log_every: 500
+  detection_every: null
+  early_stop_on_success: false
+  save_steps: [500, 1000, 1500, 2000, 2500, 3000]
+  snapshot_cover_limit: 1
+
+evaluation:
+  # Used only while preparing five detector-positive references. The attack
+  # stage never loads or queries the detector and computes no evaluation metrics.
+  p_value_threshold: 0.05
+  inversion_steps: 50
+  compute_lpips: false
+
+visualization:
+  cover_position_1based: 1314
+  latent_projection: shared_pca_4d_to_rgb
+  pca_lower_quantile: 0.005
+  pca_upper_quantile: 0.995
+  latent_projection_size: 512
+
+data:
+  dataset_name: MS-COCO user-provided cover set
+  reference_prompts_file: prompts/reference_prompts_cross_model.txt
+  # References are generated inside each unique run directory by the dedicated script.
+  references_dir: outputs/tree_ring_forgery_visualization/unused_external_reference_dir
+  cover_dir: data/MS-COCO
+  output_dir: outputs/tree_ring_forgery_visualization
+  cover_limit: 1

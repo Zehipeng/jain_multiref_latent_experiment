@@ -318,3 +318,29 @@ Evaluation produces `metrics.csv`, `paired_metrics.csv`,
 `asr_by_iteration.csv`, and `summary.json`. The ASR curve is cumulative by
 first-success step, allowing a fair comparison under every shared iteration
 budget while still stopping successful attacks before later distortion.
+
+## 11. Single proposed-method forgery visualization
+
+`run_forgery_visualization.py` is a separate, detector-free attack-stage entry
+for one qualitative trajectory. It regenerates and verifies five Tree-Ring
+references for `w_seed=0`, unloads the target pipeline, selects the 1,314th
+deterministically ordered COCO image (Python index 1,313), and then runs only
+the five-reference FP32 `simple_average` attack for 3,000 fixed iterations.
+The attack saves images and loss logs every 500 steps and performs no detection
+or quality evaluation during optimization.
+
+The four-channel proxy-VAE latents are retained exactly as `.pt` files. For
+single-panel viewing, one PCA mapping is fitted jointly to the clean latent,
+the five reference latents, and their mean, then reused to project every latent
+from four channels to one RGB PNG. These PCA colors are descriptive and are not
+a decoded natural image or an invertible representation.
+
+```bash
+python -u run_forgery_visualization.py \
+  --config configs/tree_ring_forgery_visualization_1x3000.yaml \
+  --run-name forgery_visualization_key0_coco1314_3000
+```
+
+The run is written under
+`outputs/tree_ring_forgery_visualization/<run-name>/`. Run names are immutable:
+the script refuses to overwrite an existing directory.
