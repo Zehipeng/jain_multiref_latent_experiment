@@ -344,3 +344,36 @@ python -u run_forgery_visualization.py \
 The run is written under
 `outputs/tree_ring_forgery_visualization/<run-name>/`. Run names are immutable:
 the script refuses to overwrite an existing directory.
+
+## 12. Single proposed-method removal visualization
+
+`run_removal_visualization.py` generates six detector-positive Tree-Ring images
+for `w_seed=52`. The first five form the FP32 watermarked-latent mean; the sixth
+is an independent held-out removal target and is never included in that mean.
+Deterministically ordered COCO positions 1,314--1,318 form the five unpaired
+clean priors. Only the proposed `mean_shift` target with `beta=1` is optimized.
+
+The run always executes 3,000 steps, saves an image and loss record every 500
+steps, and measures the target-key p-value at step 0 and every 500 steps. These
+detector calls are diagnostic only: they do not affect the loss, select an
+output, or trigger early stopping. Consequently this is a fixed-budget run with
+online detector monitoring, not a strict zero-query black-box protocol. The
+final output is always step 3,000. No quality metrics or baseline are computed.
+
+```bash
+python -u run_removal_visualization.py \
+  --config configs/tree_ring_removal_visualization_1x3000.yaml \
+  --run-name removal_visualization_key52_3000
+```
+
+Exact latent tensors are saved as `.pt` files. Fifteen single-panel PNGs use one
+shared descriptive PCA mapping: five reference latents, the held-out target,
+five clean priors, both means, the estimated direction, and the removal target.
+They are not VAE-decoded natural images.
+
+After a complete run, create the three package artifacts under the fixed AutoDL
+directory `/root/autodl-tmp/experiment_packages`:
+
+```bash
+bash scripts/package_removal_visualization.sh removal_visualization_key52_3000
+```

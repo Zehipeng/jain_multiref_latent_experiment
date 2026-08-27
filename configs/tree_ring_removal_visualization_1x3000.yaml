@@ -1,0 +1,72 @@
+experiment:
+  name: tree_ring_removal_visualization_1x3000
+  seed: 1234
+
+model:
+  target_model_id: sd2-community/stable-diffusion-2-base
+  target_model_revision: f5bc1bd97485577aa0b946fa8a9004e2ec147402
+  target_model_variant: fp16
+  proxy_vae_model_id: CompVis/stable-diffusion-v1-4
+  proxy_vae_revision: 133a221b8aa7292a167afc5127cb63fb5005638b
+  dtype: float16
+  device: cuda
+  disable_safety_checker: true
+  cache_dir: /root/autodl-tmp/cache/huggingface/hub
+  local_files_only: true
+
+watermark:
+  w_seed: 52
+  w_channel: 0
+  w_radius: 16
+  img_size: 512
+  generation_seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63]
+  generation_steps: 50
+
+reference_selection:
+  require_detected: true
+  max_candidates: 64
+
+prototype:
+  reference_count: 6
+  retain_count: 6
+  center: none
+  aggregation: simple_average_all_references
+
+removal:
+  method: mean_shift
+  reference_count_for_mean: 5
+  heldout_target_index: 5
+  target_in_reference_aggregate: false
+  beta: 1.0
+
+clean_prior:
+  start_position_1based: 1314
+  count: 5
+  paired_with_watermarked_references: false
+
+attack:
+  lambda_pixel: 10000.0
+  alpha: 0.0196078431372549
+  num_iterations: 3000
+  log_every: 500
+  detection_every: 500
+  early_stop_on_success: false
+  save_steps: [500, 1000, 1500, 2000, 2500, 3000]
+
+evaluation:
+  p_value_threshold: 0.05
+  inversion_steps: 50
+  compute_lpips: false
+
+visualization:
+  latent_projection: shared_pca_4d_to_rgb
+  pca_lower_quantile: 0.005
+  pca_upper_quantile: 0.995
+  latent_projection_size: 512
+
+data:
+  dataset_name: MS-COCO user-provided clean prior set
+  reference_prompts_file: prompts/reference_prompts_cross_model.txt
+  references_dir: outputs/tree_ring_removal_visualization/unused_external_reference_dir
+  cover_dir: data/MS-COCO
+  output_dir: outputs/tree_ring_removal_visualization
